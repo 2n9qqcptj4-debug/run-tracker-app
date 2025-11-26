@@ -74,7 +74,7 @@ def inject_css():
         }}
 
         .block-container {{
-            padding-top: 1.0rem;
+            padding-top: 0.75rem;
             padding-bottom: 4rem;
             max-width: 1200px;
         }}
@@ -98,6 +98,8 @@ def inject_css():
             display: flex;
             flex-direction: column;
             gap: 0.35rem;
+            border-left: 4px solid rgba(59,130,246,0.6);
+            padding-left: 1.0rem;
         }}
 
         .feed-header-line {{
@@ -110,7 +112,7 @@ def inject_css():
         .feed-main-metrics {{
             display: flex;
             flex-wrap: wrap;
-            gap: 0.8rem;
+            gap: 0.6rem;
             align-items: baseline;
         }}
 
@@ -122,6 +124,14 @@ def inject_css():
         .muted {{
             font-size: 0.85rem;
             opacity: 0.7;
+        }}
+
+        .metric-pill {{
+            padding: 0.2rem 0.55rem;
+            border-radius: 999px;
+            font-size: 0.78rem;
+            background: rgba(148,163,184,0.15);
+            border: 1px solid rgba(148,163,184,0.3);
         }}
 
         .tag {{
@@ -169,6 +179,52 @@ def inject_css():
             font-size: 0.75rem;
             font-weight: 600;
             color: #111827;
+        }}
+
+        /* Calendar styles */
+        .calendar-grid {{
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 0.4rem;
+        }}
+
+        .calendar-day {{
+            min-height: 80px;
+            border-radius: 10px;
+            padding: 0.4rem 0.5rem;
+            background: rgba(15,23,42,0.8);
+            border: 1px solid rgba(148,163,184,0.35);
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            cursor: pointer;
+        }}
+
+        .calendar-day-empty {{
+            min-height: 80px;
+            border-radius: 10px;
+            padding: 0.4rem 0.5rem;
+            background: transparent;
+            border: 1px dashed rgba(148,163,184,0.15);
+        }}
+
+        .calendar-day-header {{
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.75rem;
+            opacity: 0.8;
+        }}
+
+        .calendar-day-mileage {{
+            margin-top: 0.35rem;
+            font-size: 0.95rem;
+            font-weight: 600;
+        }}
+
+        .calendar-day-tags {{
+            margin-top: 0.2rem;
+            font-size: 0.7rem;
+            opacity: 0.8;
         }}
         </style>
         """,
@@ -990,6 +1046,73 @@ def render_home_page():
             st.session_state["edit_run_id"] = int(row["id"])
             st.rerun()
 
+            def filter_runs_ui(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Renders filter controls and returns a filtered DataFrame.
+    """
+    st.markdown("### 🔍 Filter & Search")
+    df_local = df.copy()
+
+    # Make sure date column is datetime for filtering
+    df_local["date_dt"] = pd.to_datetime(df_local["date"], errors="coerce")
+
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        search = st.text_input(
+            "Search (how you felt, pain, terrain, weather, nutrition)",
+            value="",
+            placeholder="e.g. 'shin', 'tempo', 'tired but good'"
+        ).strip().lower()
+    with col2:
+        run_types = sorted(df_local["run_type"].dropna().unique().tolist())
+        selected_types = st.multiselect(
+            "Run type",
+            options=run_types,
+            default=run_types,
+        )
+
+    col3, col4 = st.columns(2)
+    with col3:
+        min_date = df_local["date_dt"].min().date()
+        max_date = df_local["date_dt"].max().date()
+        date_range = st.date_input(
+            "Date range",
+            value=(min_date, max_date),
+        )
+        if isinstance(date_range, tuple):
+            start_date, end_date = date_range
+        else:
+            start_date, end_date = min_date, max_date
+
+    with col4:
+        min_dist = float(df_local["distance"].min() or 0.0)
+        max_dist = float(df_local["distance"].max() or 0.0)
+        if max_dist == 0.0:
+            max_dist = 10.0
+        dist_min, dist_max = st.slider(
+            "Distance range (mi)",
+            min_value=0.0,
+            max_value=float(max_dist),
+            value=(float(min_dist), float(max_dist)),
+        )
+
+    # Apply filters
+    mask = pd.Series(True, index=df_local.index)
+
+    if selected_types:
+        mask &= df_local["run_type"].isin(selected_types)
+
+    mask &= (df_local["date_dt"].dt.date >= start_date) & (df_local["date_dt"].dt.date <= end_date)
+    mask &= df_local["distance"].fillna(0.0).between(dist_min, dist_max)
+
+    if search:
+        search_cols = ["how_felt", "pain", "terrain", "weather", "nutrition_notes", "run_type"]
+        combined = df_local[search_cols].fillna("").astype(str).agg(" ".join, axis=1).str.lower()
+        mask &= combined.str.contains(search)
+
+    return df_local[mask].sort_values("date_dt", ascending=False)
+
+
 
 def render_feed_page():
     st.title("📜 Training Feed")
@@ -999,16 +1122,23 @@ def render_feed_page():
         st.info("No runs yet — log one or import from Garmin.")
         return
 
-    df = df.sort_values("date", ascending=False)
-    metrics = prepare_metrics_df(df)
+    # Use the new filter UI
+    filtered = filter_runs_ui(df)
+    if filtered.empty:
+        st.warning("No runs match your filters/search. Try widening the filters.")
+        return
+
+    metrics = prepare_metrics_df(filtered)
     prs = calculate_prs(metrics)
 
-    for _, row in df.iterrows():
+    for _, row in filtered.iterrows():
         rt = row["run_type"] or "Other"
         distance, dunit = convert_distance_for_display(row["distance"])
         pace = row["avg_pace"] or "—"
         hr = row["avg_hr"] or "—"
         elev = row["elevation_gain"] or "—"
+        effort = row["effort"] or "—"
+        felt = row["how_felt"] or "—"
 
         badges = []
         if prs:
@@ -1027,22 +1157,44 @@ def render_feed_page():
                 </div>
                 <div class='feed-main-metrics'>
                     <span class='big-distance'>{distance:.2f} {dunit}</span>
-                    <span class='muted'>Pace: {pace}</span>
-                    <span class='muted'>HR: {hr}</span>
-                    <span class='muted'>Elev: {elev} ft</span>
+                    <span class='metric-pill'>🏃 Pace: {pace}</span>
+                    <span class='metric-pill'>❤️ HR: {hr}</span>
+                    <span class='metric-pill'>⛰ Elev: {elev} ft</span>
+                    <span class='metric-pill'>🎯 Effort: {effort}/10</span>
                 </div>
-                <span class='muted'>Effort: {row['effort'] or '—'} / 10</span><br>
-                <span class='muted'>Felt: {row['how_felt'] or '—'}</span>
+                <div class='muted' style='margin-top:0.35rem;'>
+                    💬 {felt}
+                </div>
                 {f"<div class='pr-badge'>{badge_text}</div>" if badge_text else ""}
             </div>
             """,
             unsafe_allow_html=True,
         )
 
-        if st.button(f"Edit Run {row['id']}", key=f"edit_feed_{row['id']}"):
-            st.session_state["page"] = "Edit Run"
-            st.session_state["edit_run_id"] = int(row["id"])
-            st.rerun()
+        cols = st.columns(3)
+        with cols[0]:
+            if st.button(f"Edit", key=f"edit_feed_{row['id']}"):
+                st.session_state["page"] = "Edit Run"
+                st.session_state["edit_run_id"] = int(row["id"])
+                st.rerun()
+        with cols[1]:
+            if st.button(f"AI Analyze", key=f"ai_feed_{row['id']}"):
+                prompt = (
+                    "Analyze this run in detail (pacing, HR, effort, injury risk, "
+                    "and 3 concrete takeaways):\n\n"
+                    f"{dict(row)}"
+                )
+                st.write(call_ai(prompt))
+        with cols[2]:
+            if st.button(f"Compare Similar", key=f"cmp_feed_{row['id']}"):
+                # Simple similar-runs preview
+                all_df = fetch_runs()
+                similar = all_df[
+                    (all_df["run_type"] == row["run_type"])
+                    & (all_df["distance"].between(row["distance"] * 0.8, row["distance"] * 1.2))
+                ].sort_values("date", ascending=False).head(5)
+                st.write("Similar recent runs (same type, similar distance):")
+                st.dataframe(similar[["date", "run_type", "distance", "avg_pace", "avg_hr", "effort"]])
 
 
 # =========================
@@ -1653,6 +1805,144 @@ def render_dashboard_page():
 # =========================
 # AI COACH PAGE (with advanced schedule controls)
 # =========================
+
+def render_calendar_page():
+    st.title("📆 Calendar")
+
+    df = fetch_runs()
+    if df.empty:
+        st.info("Log some runs to see them on the calendar.")
+        return
+
+    df_local = df.copy()
+    df_local["date_dt"] = pd.to_datetime(df_local["date"], errors="coerce")
+    df_local = df_local.dropna(subset=["date_dt"])
+
+    # Choose month to view
+    today = datetime.today().date()
+    default_month_start = today.replace(day=1)
+    month_date = st.date_input("Month", value=default_month_start)
+    month_start = month_date.replace(day=1)
+    # next month
+    if month_start.month == 12:
+        next_month = month_start.replace(year=month_start.year + 1, month=1, day=1)
+    else:
+        next_month = month_start.replace(month=month_start.month + 1, day=1)
+    month_end = next_month - timedelta(days=1)
+
+    # Filter runs in this month
+    month_mask = (df_local["date_dt"].dt.date >= month_start) & (df_local["date_dt"].dt.date <= month_end)
+    month_runs = df_local[month_mask]
+
+    # Build a map from date -> runs
+    runs_by_date = {}
+    for _, row in month_runs.iterrows():
+        d = row["date_dt"].date()
+        runs_by_date.setdefault(d, []).append(row)
+
+    # Calendar header
+    st.markdown("#### Monthly Overview")
+    weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    cols = st.columns(7)
+    for i, wd in enumerate(weekdays):
+        cols[i].markdown(f"**{wd}**")
+
+    # Find first day of grid (start on Monday)
+    first_weekday = month_start.weekday()  # Monday=0
+    current = month_start - timedelta(days=first_weekday)
+
+    # Render 6 weeks grid
+    selected_date = st.session_state.get("calendar_selected_date")
+
+    for _ in range(6):
+        cols = st.columns(7)
+        for i in range(7):
+            day = current
+            if month_start <= day <= month_end:
+                daily_runs = runs_by_date.get(day, [])
+                total_miles = sum([r["distance"] for r in daily_runs if not pd.isna(r["distance"])])
+                run_types = sorted({r["run_type"] for r in daily_runs if r["run_type"]})
+
+                # Build small display
+                with cols[i]:
+                    if st.button(
+                        f"{day.day}",
+                        key=f"cal_btn_{day.isoformat()}",
+                    ):
+                        st.session_state["calendar_selected_date"] = day
+                        selected_date = day
+
+                    if total_miles > 0:
+                        st.markdown(
+                            f"<div class='calendar-day-mileage'>{total_miles:.1f} mi</div>",
+                            unsafe_allow_html=True,
+                        )
+                    if run_types:
+                        st.markdown(
+                            "<div class='calendar-day-tags'>" +
+                            ", ".join(run_types) +
+                            "</div>",
+                            unsafe_allow_html=True,
+                        )
+            else:
+                # Outside current month
+                with cols[i]:
+                    st.markdown("<br>", unsafe_allow_html=True)
+            current += timedelta(days=1)
+
+    # Details for selected day
+    if selected_date:
+        st.markdown("---")
+        st.subheader(f"Runs on {selected_date.isoformat()}")
+        day_runs = month_runs[month_runs["date_dt"].dt.date == selected_date]
+        if day_runs.empty:
+            st.info("No runs on this day.")
+        else:
+            for _, row in day_runs.iterrows():
+                rt = row["run_type"] or "Other"
+                distance, dunit = convert_distance_for_display(row["distance"])
+                pace = row["avg_pace"] or "—"
+                hr = row["avg_hr"] or "—"
+                elev = row["elevation_gain"] or "—"
+                effort = row["effort"] or "—"
+                felt = row["how_felt"] or "—"
+
+                st.markdown(
+                    f"""
+                    <div class='card feed-card'>
+                        <div class='feed-header-line'>
+                            <span><strong>{row['date']}</strong></span>
+                            <span class='tag tag-{rt}'>{rt}</span>
+                        </div>
+                        <div class='feed-main-metrics'>
+                            <span class='big-distance'>{distance:.2f} {dunit}</span>
+                            <span class='metric-pill'>🏃 Pace: {pace}</span>
+                            <span class='metric-pill'>❤️ HR: {hr}</span>
+                            <span class='metric-pill'>⛰ Elev: {elev} ft</span>
+                            <span class='metric-pill'>🎯 Effort: {effort}/10</span>
+                        </div>
+                        <div class='muted' style='margin-top:0.35rem;'>
+                            💬 {felt}
+                        </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                cols = st.columns(2)
+                with cols[0]:
+                    if st.button("Edit", key=f"edit_cal_{row['id']}"):
+                        st.session_state["page"] = "Edit Run"
+                        st.session_state["edit_run_id"] = int(row["id"])
+                        st.rerun()
+                with cols[1]:
+                    if st.button("AI Analyze", key=f"ai_cal_{row['id']}"):
+                        prompt = (
+                            "Analyze this run in detail (pacing, HR, effort, injury risk, "
+                            "and 3 concrete takeaways):\n\n"
+                            f"{dict(row)}"
+                        )
+                        st.write(call_ai(prompt))
+
 
 def render_ai_coach_page():
     st.title("🤖 AI Coach")
@@ -2429,57 +2719,69 @@ def main():
     )
     st.session_state["race_goal"] = st.session_state["sidebar_race_goal"]
 
-    page = st.sidebar.radio(
-        "Page",
-        [
-            "Home",
-            "Feed",
-            "Log a Run",
-            "Dashboard",
-            "Garmin Import",
-            "AI Coach",
-            "Compare Runs",
-            "Pace Zones",
-            "Settings",
-        ],
-        index=[
-            "Home",
-            "Feed",
-            "Log a Run",
-            "Dashboard",
-            "Garmin Import",
-            "AI Coach",
-            "Compare Runs",
-            "Pace Zones",
-            "Settings",
-        ].index(st.session_state.get("page", "Home")),
-    )
-    st.session_state["page"] = page
+    page_options = [
+    "Home",
+    "Feed",
+    "Calendar",
+    "Log a Run",
+    "Dashboard",
+    "Garmin Import",
+    "AI Coach",
+    "Compare Runs",
+    "Pace Zones",
+    "Settings",
+]
 
-    if page == "Home":
-        render_home_page()
-    elif page == "Feed":
-        render_feed_page()
-    elif page == "Log a Run":
-        render_log_run_page()
-    elif page == "Dashboard":
-        render_dashboard_page()
-    elif page == "Garmin Import":
-        render_garmin_import_page()
-    elif page == "AI Coach":
-        render_ai_coach_page()
-    elif page == "Compare Runs":
-        render_compare_runs_page()
-    elif page == "Pace Zones":
-        render_pace_zones_page()
-    elif page == "Settings":
-        render_settings_page()
-    elif page == "Edit Run":
-        rid = st.session_state.get("edit_run_id")
-        if rid is None:
-            st.error("No run selected to edit.")
-        else:
-            render_edit_run_page(int(rid))
+page_options = [
+    "Home",
+    "Feed",
+    "Calendar",
+    "Log a Run",
+    "Dashboard",
+    "Garmin Import",
+    "AI Coach",
+    "Compare Runs",
+    "Pace Zones",
+    "Settings",
+]
+
+page = st.sidebar.radio(
+    "Page",
+    page_options,
+    index=page_options.index(st.session_state.get("page", "Home")),
+)
+
+st.session_state["page"] = page
+
+# ---- PAGE ROUTING ----
+if page == "Home":
+    render_home_page()
+elif page == "Feed":
+    render_feed_page()
+elif page == "Calendar":
+    render_calendar_page()
+elif page == "Log a Run":
+    render_log_run_page()
+elif page == "Dashboard":
+    render_dashboard_page()
+elif page == "Garmin Import":
+    render_garmin_import_page()
+elif page == "AI Coach":
+    render_ai_coach_page()
+elif page == "Compare Runs":
+    render_compare_runs_page()
+elif page == "Pace Zones":
+    render_pace_zones_page()
+elif page == "Settings":
+    render_settings_page()
+elif page == "Edit Run":
+    rid = st.session_state.get("edit_run_id")
+    if rid is None:
+        st.error("No run selected to edit.")
+    else:
+        render_edit_run_page(int(rid))
+
+
 
 
 if __name__ == "__main__":
