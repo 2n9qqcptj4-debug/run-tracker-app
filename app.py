@@ -1046,7 +1046,8 @@ def render_home_page():
             st.session_state["edit_run_id"] = int(row["id"])
             st.rerun()
 
-            def filter_runs_ui(df: pd.DataFrame) -> pd.DataFrame:
+            
+def filter_runs_ui(df: pd.DataFrame) -> pd.DataFrame:
     """
     Renders filter controls and returns a filtered DataFrame.
     """
@@ -1063,6 +1064,7 @@ def render_home_page():
             value="",
             placeholder="e.g. 'shin', 'tempo', 'tired but good'"
         ).strip().lower()
+
     with col2:
         run_types = sorted(df_local["run_type"].dropna().unique().tolist())
         selected_types = st.multiselect(
@@ -1086,9 +1088,7 @@ def render_home_page():
 
     with col4:
         min_dist = float(df_local["distance"].min() or 0.0)
-        max_dist = float(df_local["distance"].max() or 0.0)
-        if max_dist == 0.0:
-            max_dist = 10.0
+        max_dist = float(df_local["distance"].max() or 10.0)
         dist_min, dist_max = st.slider(
             "Distance range (mi)",
             min_value=0.0,
