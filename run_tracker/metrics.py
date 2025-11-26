@@ -1,10 +1,10 @@
-import pandas as pd
 from datetime import timedelta
+import pandas as pd
 import streamlit as st
 
-# ------------------------------------------------------
-# Basic time + pace utilities
-# ------------------------------------------------------
+# =========================
+# BASIC TIME / PACE UTILS
+# =========================
 
 def duration_to_minutes(time_str: str | None):
     if not time_str:
@@ -46,29 +46,26 @@ def pace_to_float(pace_str: str | None):
         return None
 
 
-# ------------------------------------------------------
-# Prepare metrics dataframe: the core cleaner
-# ------------------------------------------------------
+# =========================
+# METRICS PREP
+# =========================
 
 def prepare_metrics_df(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
-
     m = df.copy()
 
-    # Convert string date → datetime
+    # date handling
     m["date_dt"] = pd.to_datetime(m["date"], errors="coerce")
     m = m.dropna(subset=["date_dt"])
     m["date"] = m["date_dt"].dt.date
-
-    # Week start (Monday)
     m["week_start"] = m["date_dt"] - pd.to_timedelta(m["date_dt"].dt.weekday, unit="D")
     m["week_start"] = m["week_start"].dt.date
 
-    # Training load used for CTL/ATL
+    # training load
     m["training_load"] = m["effort"].fillna(0) * m["duration_minutes"].fillna(0)
 
-    # Pace
+    # pace in min/mi
     m["pace_min_per_mile"] = None
     mask = (
         m["distance"].notna()
@@ -79,7 +76,7 @@ def prepare_metrics_df(df: pd.DataFrame) -> pd.DataFrame:
         m.loc[mask, "duration_minutes"] / m.loc[mask, "distance"]
     )
 
-    # Heart-rate based RSS load
+    # RSS (heart-rate based load)
     hr_max = float(st.session_state.get("hr_max", 190))
     m["rss"] = None
     mask_rss = m["duration_minutes"].notna() & m["avg_hr"].notna()
@@ -91,14 +88,13 @@ def prepare_metrics_df(df: pd.DataFrame) -> pd.DataFrame:
     return m
 
 
-# ------------------------------------------------------
-# Aggregation functions
-# ------------------------------------------------------
+# =========================
+# LOAD / FITNESS / FATIGUE
+# =========================
 
 def compute_daily_load(metrics: pd.DataFrame) -> pd.DataFrame:
     if metrics.empty:
         return metrics
-
     daily = (
         metrics.groupby("date_dt", as_index=False)
         .agg(
@@ -110,10 +106,9 @@ def compute_daily_load(metrics: pd.DataFrame) -> pd.DataFrame:
     return daily
 
 
-def compute_fitness_fatigue(daily: pd.DataFrame):
+def compute_fitness_fatigue(daily: pd.DataFrame) -> pd.DataFrame:
     if daily.empty:
         return daily
-
     d = daily.sort_values("date_dt").copy()
     d["CTL"] = d["training_load"].rolling(window=42, min_periods=1).mean()
     d["ATL"] = d["training_load"].rolling(window=7, min_periods=1).mean()
@@ -139,9 +134,9 @@ def compute_efficiency_score(metrics: pd.DataFrame) -> pd.DataFrame:
     return m
 
 
-# ------------------------------------------------------
-# PR / mileage / pace records
-# ------------------------------------------------------
+# =========================
+# PR / MILEAGE HELPERS
+# =========================
 
 def calculate_prs(df: pd.DataFrame):
     prs = {}
@@ -157,25 +152,24 @@ def calculate_prs(df: pd.DataFrame):
     if not pace_df.empty:
         prs["fastest_pace"] = pace_df["pace_num"].min()
 
-    # Standard race distances
-    def best_time(dist):
-        r = df[df["distance"] >= dist]
+    def best_time(min_dist):
+        r = df[df["distance"] >= min_dist]
         if r.empty:
             return None
-        return (r["duration_minutes"] / r["distance"] * dist).min()
+        return (r["duration_minutes"] / r["distance"] * min_dist).min()
 
     prs["fastest_mile"] = best_time(1.0)
     prs["fastest_5k"] = best_time(3.11)
     prs["fastest_10k"] = best_time(6.22)
     prs["fastest_half"] = best_time(13.1)
 
-    # Weekly mileage PR
+    df["date_dt"] = pd.to_datetime(df["date"])
     df["week"] = df["date_dt"].dt.isocalendar().week
     df["year"] = df["date_dt"].dt.year
+
     weekly = df.groupby(["year", "week"])["distance"].sum()
     prs["highest_weekly_mileage"] = weekly.max()
 
-    # Monthly mileage PR
     df["month"] = df["date_dt"].dt.month
     monthly = df.groupby(["year", "month"])["distance"].sum()
     prs["highest_monthly_mileage"] = monthly.max()
@@ -183,9 +177,39 @@ def calculate_prs(df: pd.DataFrame):
     return prs
 
 
-# ------------------------------------------------------
-# Streaks
-# ------------------------------------------------------
+def detect_pr_improvements(prs_before, prs_after):
+    if prs_after is None:
+        return []
+    labels = {
+        "longest_distance": "Longest Run",
+        "fastest_pace": "Fastest Overall Pace",
+        "fastest_mile": "Fastest Mile",
+        "fastest_5k": "Fastest 5K",
+        "fastest_10k": "Fastest 10K",
+        "fastest_half": "Fastest Half Marathon",
+        "highest_weekly_mileage": "Highest Weekly Mileage",
+        "highest_monthly_mileage": "Highest Monthly Mileage",
+    }
+    improvements = []
+    for key, new_val in prs_after.items():
+        if new_val is None or pd.isna(new_val):
+            continue
+        old_val = prs_before.get(key) if prs_before else None
+        if old_val is None or pd.isna(old_val):
+            improvements.append(labels.get(key, key))
+            continue
+        if "fastest" in key:
+            if new_val < old_val - 1e-6:
+                improvements.append(labels.get(key, key))
+        else:
+            if new_val > old_val + 1e-6:
+                improvements.append(labels.get(key, key))
+    return improvements
+
+
+# =========================
+# STREAKS
+# =========================
 
 def compute_streaks(metrics: pd.DataFrame):
     if metrics.empty:
@@ -193,7 +217,6 @@ def compute_streaks(metrics: pd.DataFrame):
     dates = sorted(set(metrics["date_dt"].dt.date))
     if not dates:
         return 0, 0
-
     current = 1
     longest = 1
     for i in range(1, len(dates)):
@@ -205,11 +228,11 @@ def compute_streaks(metrics: pd.DataFrame):
     return current, longest
 
 
-# ------------------------------------------------------
-# HR Zone mapping
-# ------------------------------------------------------
+# =========================
+# HR ZONES
+# =========================
 
-def add_hr_zones(metrics: pd.DataFrame, hr_max=190):
+def add_hr_zones(metrics: pd.DataFrame, hr_max=190) -> pd.DataFrame:
     if metrics.empty or "avg_hr" not in metrics.columns:
         return metrics
 
@@ -232,33 +255,99 @@ def add_hr_zones(metrics: pd.DataFrame, hr_max=190):
     return m
 
 
-# ------------------------------------------------------
-# Race predictions (simple model)
-# ------------------------------------------------------
+def calculate_hr_zones(hr_max):
+    return {
+        "Zone 1 (Recovery)": (0.50 * hr_max, 0.60 * hr_max),
+        "Zone 2 (Easy / Aerobic)": (0.60 * hr_max, 0.70 * hr_max),
+        "Zone 3 (Tempo)": (0.70 * hr_max, 0.80 * hr_max),
+        "Zone 4 (Threshold)": (0.80 * hr_max, 0.90 * hr_max),
+        "Zone 5 (VO2 Max)": (0.90 * hr_max, 1.00 * hr_max),
+    }
+
+
+# =========================
+# RACE PREDICTIONS
+# =========================
 
 def predict_race_times(df: pd.DataFrame):
     if df.empty:
         return None
-
     df = df.copy()
     df["pace_num"] = df["avg_pace"].apply(pace_to_float)
     best_pace = df["pace_num"].min()
-
-    # Adjust based on VO2 and fatigue
     vo2 = df["vo2max"].dropna().mean() if "vo2max" in df.columns else None
     vo2_factor = (50 / vo2) if vo2 else 1.0
 
-    from .metrics import compute_daily_load, compute_fitness_fatigue  # safe here
     daily = compute_daily_load(df)
     load = compute_fitness_fatigue(daily)
     tsb = load["TSB"].iloc[-1] if not load.empty else 0
     fatigue_factor = 1 - (tsb / 200.0)
 
     effective_pace = best_pace * vo2_factor * fatigue_factor
-
     return {
         "5K": effective_pace * 3.11,
         "10K": effective_pace * 6.22,
         "Half": effective_pace * 13.1,
         "Marathon": effective_pace * 26.2,
     }
+
+
+def generate_race_prediction_series(df: pd.DataFrame):
+    if df.empty:
+        return pd.DataFrame([])
+    out = []
+    df = df.copy().sort_values("date_dt")
+    for _, row in df.iterrows():
+        sub = df[df["date_dt"] <= row["date_dt"]]
+        pred = predict_race_times(sub)
+        if pred:
+            out.append(
+                {
+                    "date": row["date_dt"],
+                    "5K": pred["5K"],
+                    "10K": pred["10K"],
+                    "Half": pred["Half"],
+                    "Marathon": pred["Marathon"],
+                }
+            )
+    return pd.DataFrame(out)
+
+
+# =========================
+# PACE ZONE HELPERS
+# =========================
+
+def estimate_threshold_pace(prs):
+    if not prs:
+        return None
+    fivek = prs.get("fastest_5k")
+    mile = prs.get("fastest_mile")
+    if fivek:
+        return fivek / 3.11 * 0.98
+    if mile:
+        return mile * 1.15
+    return None
+
+
+def estimate_easy_pace(best_pace):
+    if best_pace is None:
+        return None, None
+    return best_pace + 1.0, best_pace + 2.0
+
+
+def estimate_tempo_pace(threshold_pace):
+    if threshold_pace is None:
+        return None
+    return threshold_pace * 0.97, threshold_pace * 1.02
+
+
+def estimate_interval_pace(best_pace):
+    if best_pace is None:
+        return None
+    return best_pace * 0.90, best_pace * 0.95
+
+
+def estimate_rep_pace(best_pace):
+    if best_pace is None:
+        return None
+    return best_pace * 0.80, best_pace * 0.90
