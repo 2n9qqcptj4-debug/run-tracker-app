@@ -3,7 +3,7 @@ import streamlit as st
 from styles import inject_css
 from db import init_db
 from utils import init_session_state
-from pages import (
+from run_tracker.pages import (
     home,
     feed,
     log_run,
