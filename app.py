@@ -1952,22 +1952,26 @@ Current PRs:
         # ======================
         #   SCHEDULE PREFERENCES
         # ======================
+                # ======================
+        #   SCHEDULE PREFERENCES
+        # ======================
         st.subheader("Training Schedule Preferences")
 
         days_of_week = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
-        block_days_per_week = st.slider(
-            "Days per week",
-            2, 7, 5,
-            key="block_days_per_week"
-        )
-
+        st.write("**Select which days you want to train each week**")
         block_training_days = st.multiselect(
             "Training Days",
             days_of_week,
-            default=["Mon", "Tue", "Thu", "Sat", "Sun"][:block_days_per_week],
+            default=["Mon", "Tue", "Thu", "Sat", "Sun"],
             key="block_training_days"
         )
+
+        # Auto-calc number of days
+        block_days_per_week = len(block_training_days)
+
+        if block_days_per_week == 0:
+            st.warning("Please choose at least one training day.")
 
         block_hard_days = st.multiselect(
             "Preferred Hard Days (Tempo / Intervals)",
