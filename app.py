@@ -221,7 +221,6 @@ def init_db():
         """
     )
 
-    # shoes table
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS shoes (
@@ -234,7 +233,6 @@ def init_db():
         """
     )
 
-    # ensure shoe_id column exists
     cur.execute("PRAGMA table_info(runs)")
     cols = [row[1] for row in cur.fetchall()]
     if "shoe_id" not in cols:
@@ -302,10 +300,8 @@ def prepare_metrics_df(df: pd.DataFrame) -> pd.DataFrame:
     m["week_start"] = m["date_dt"] - pd.to_timedelta(m["date_dt"].dt.weekday, unit="D")
     m["week_start"] = m["week_start"].dt.date
 
-    # training load
     m["training_load"] = m["effort"].fillna(0) * m["duration_minutes"].fillna(0)
 
-    # pace (min/mi)
     m["pace_min_per_mile"] = None
     mask = (
         m["distance"].notna()
@@ -316,7 +312,6 @@ def prepare_metrics_df(df: pd.DataFrame) -> pd.DataFrame:
         m.loc[mask, "duration_minutes"] / m.loc[mask, "distance"]
     )
 
-    # running stress score (simple)
     hr_max = float(st.session_state.get("hr_max", 190))
     m["rss"] = None
     mask_rss = m["duration_minutes"].notna() & m["avg_hr"].notna()
@@ -817,7 +812,6 @@ def build_run_from_garmin_df(df: pd.DataFrame):
             raw = row[c]
             try:
                 val = float(str(raw).replace(",", ""))
-                # assume miles if no unit, some exports are meters but we'll keep it simple
                 distance = val
             except Exception:
                 pass
@@ -919,8 +913,6 @@ def build_run_from_garmin_df(df: pd.DataFrame):
     if warnings:
         msg += " " + " ".join(warnings)
     return data, msg
-
-
 # =========================
 # PAGES: HOME & FEED
 # =========================
@@ -1097,7 +1089,6 @@ def render_log_run_page():
         submitted = st.form_submit_button("Save Run")
 
         if submitted:
-            # PRs before
             df_before = fetch_runs()
             metrics_before = prepare_metrics_df(df_before) if not df_before.empty else df_before
             prs_before = calculate_prs(metrics_before) if not df_before.empty else {}
@@ -1140,7 +1131,6 @@ def render_log_run_page():
             insert_run(data)
             st.success("Run saved! ✅")
 
-            # PRs after
             df_after = fetch_runs()
             metrics_after = prepare_metrics_df(df_after)
             prs_after = calculate_prs(metrics_after)
@@ -1334,7 +1324,6 @@ def render_dashboard_page():
     col4.metric("Current Streak", f"{current_streak} days")
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # PR banners
     if prs:
         if metrics["distance"].max() == prs.get("longest_distance"):
             st.markdown("<div class='pr-banner'>🏆 New Longest Run!</div>", unsafe_allow_html=True)
@@ -1350,7 +1339,6 @@ def render_dashboard_page():
         if monthly.max() == prs.get("highest_monthly_mileage"):
             st.markdown("<div class='pr-banner'>📈 Highest Monthly Mileage Ever!</div>", unsafe_allow_html=True)
 
-    # Weekly distance
     st.markdown("<div class='card'>", unsafe_allow_html=True)
     st.subheader("Weekly Distance")
     dfw = metrics.copy()
@@ -1377,7 +1365,6 @@ def render_dashboard_page():
         st.info("Not enough data for weekly chart.")
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # Pace trend
     st.markdown("<div class='card'>", unsafe_allow_html=True)
     st.subheader("Pace Trend (min/mi)")
     p = metrics.dropna(subset=["pace_min_per_mile"])
@@ -1402,7 +1389,6 @@ def render_dashboard_page():
         st.info("Log distance and duration to see pace trends.")
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # VO2 and Efficiency
     st.markdown("<div class='card'>", unsafe_allow_html=True)
     st.subheader("VO2 Max & Efficiency Over Time")
     eff = metrics.dropna(subset=["efficiency_score"])
@@ -1433,7 +1419,6 @@ def render_dashboard_page():
         st.info("Log VO2 max and HR-based runs to see these curves.")
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # HR & HR zone distribution
     colA, colB = st.columns(2)
     with colA:
         st.markdown("<div class='card'>", unsafe_allow_html=True)
@@ -1474,7 +1459,6 @@ def render_dashboard_page():
             st.info("Need HR data to show zones.")
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # Cadence
     st.markdown("<div class='card'>", unsafe_allow_html=True)
     st.subheader("Cadence Trend (spm)")
     cad = metrics.dropna(subset=["cadence"])
@@ -1493,7 +1477,6 @@ def render_dashboard_page():
         st.info("Log cadence to view this trend.")
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # Training load (CTL, ATL, TSB)
     st.markdown("<div class='card'>", unsafe_allow_html=True)
     st.subheader("Training Load: Fitness (CTL), Fatigue (ATL), Form (TSB)")
     if not load_df.empty:
@@ -1518,7 +1501,6 @@ def render_dashboard_page():
         st.info("Not enough training load data yet.")
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # Race prediction
     st.markdown("<div class='card'>", unsafe_allow_html=True)
     st.subheader("🏁 Race Prediction Trend")
     pred_df = generate_race_prediction_series(metrics)
@@ -1545,7 +1527,6 @@ def render_dashboard_page():
         colD2.metric("Marathon", f"{last['Marathon']:.1f} min")
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # Habits & recovery
     st.markdown("<div class='card'>", unsafe_allow_html=True)
     st.subheader("Habits & Recovery (Last 21 Days)")
     recent = metrics[metrics["date_dt"] >= datetime.now() - timedelta(days=21)]
@@ -1585,7 +1566,6 @@ def render_dashboard_page():
             st.altair_chart(chart, use_container_width=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # Injury risk snapshot
     st.markdown("<div class='card'>", unsafe_allow_html=True)
     st.subheader("Injury Risk Snapshot")
     last14 = metrics[metrics["date_dt"] >= datetime.now() - timedelta(days=14)]
@@ -1630,7 +1610,6 @@ def render_dashboard_page():
         st.write(f"**Estimated Injury Risk:** {risk_label} (score {risk_score}/7)")
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # Shoe mileage
     st.markdown("<div class='card'>", unsafe_allow_html=True)
     st.subheader("👟 Shoe Mileage")
     shoes_df = fetch_shoes(include_retired=True)
@@ -1659,7 +1638,6 @@ def render_dashboard_page():
             )
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # Personal records summary
     st.markdown("<div class='card'>", unsafe_allow_html=True)
     st.subheader("🏆 Personal Records")
     if not prs:
@@ -1672,10 +1650,8 @@ def render_dashboard_page():
             else:
                 st.write(f"🔥 **{label}:** {val:.2f} mi")
     st.markdown("</div>", unsafe_allow_html=True)
-
-
 # =========================
-# AI COACH PAGE
+# AI COACH PAGE (with advanced schedule controls)
 # =========================
 
 def render_ai_coach_page():
@@ -1705,7 +1681,7 @@ def render_ai_coach_page():
         ]
     )
 
-    # Tab 1: Daily & Weekly
+    # --- Tab 1: Daily & Weekly ---
     with tab1:
         col1, col2 = st.columns(2)
         with col1:
@@ -1741,7 +1717,7 @@ def render_ai_coach_page():
                 )
                 st.write(call_ai(prompt))
 
-    # Tab 2: Workout Generator
+    # --- Tab 2: Workout Generator ---
     with tab2:
         st.markdown("<div class='card'><h3>Generate Tomorrow’s Workout</h3></div>", unsafe_allow_html=True)
         if st.button("Create Tomorrow's Workout"):
@@ -1753,19 +1729,101 @@ def render_ai_coach_page():
             )
             st.write(call_ai(prompt))
 
-    # Tab 3: 7-Day Plan
+    # --- Tab 3: 7-Day Plan (with advanced schedule controls) ---
     with tab3:
         st.markdown("<div class='card'><h3>Next 7-Day Plan</h3></div>", unsafe_allow_html=True)
+
+        st.subheader("Training Schedule Preferences")
+
+        days_of_week = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+        training_days_per_week = st.slider(
+            "Days per week you want to run",
+            min_value=2,
+            max_value=7,
+            value=5,
+            key="7d_days_per_week",
+        )
+
+        default_training_days = ["Mon", "Tue", "Thu", "Sat", "Sun"]
+        training_days = st.multiselect(
+            "Which days do you want to train?",
+            options=days_of_week,
+            default=default_training_days[:training_days_per_week],
+            key="7d_training_days",
+        )
+
+        hard_days = st.multiselect(
+            "Preferred HARD workout days (tempo/intervals)",
+            options=days_of_week,
+            default=["Tue", "Thu"],
+            key="7d_hard_days",
+        )
+
+        rest_days = st.multiselect(
+            "Preferred rest days",
+            options=days_of_week,
+            default=["Fri"],
+            key="7d_rest_days",
+        )
+
+        long_run_day = st.selectbox(
+            "Primary long run day",
+            options=days_of_week,
+            index=6,  # Sunday
+            key="7d_long_run_day",
+        )
+
+        secondary_options = ["None"] + days_of_week
+        secondary_long_run = st.selectbox(
+            "Optional secondary long run day (for back-to-back endurance)",
+            options=secondary_options,
+            index=0,
+            key="7d_secondary_long_run",
+        )
+
+        allow_back_to_back = st.checkbox(
+            "Allow back-to-back hard days",
+            value=False,
+            key="7d_allow_back_to_back",
+        )
+
+        allow_doubles = st.checkbox(
+            "Allow double days (AM/PM)?",
+            value=False,
+            key="7d_allow_doubles",
+        )
+
+        if len(training_days) != training_days_per_week:
+            st.warning(
+                f"You selected {training_days_per_week} days per week but chose "
+                f"{len(training_days)} training days. The AI will still try to honor both, "
+                "but you may want to align them."
+            )
+
         if st.button("Generate 7-Day Plan"):
+            prefs_text = f"""
+Training schedule preferences:
+- Days per week: {training_days_per_week}
+- Training days: {", ".join(training_days) if training_days else "None specified"}
+- Key workout days: {", ".join(hard_days) if hard_days else "None specified"}
+- Rest days: {", ".join(rest_days) if rest_days else "None specified"}
+- Long run day: {long_run_day}
+- Secondary long run: {secondary_long_run}
+- Allow back-to-back hard days: {"Yes" if allow_back_to_back else "No"}
+- Allow doubles: {"Yes" if allow_doubles else "No"}
+"""
+
             prompt = (
                 "Using my recent training and my goal race, build a structured 7-day plan including run types, "
-                "distances, suggested paces, HR zones, and rest days.\n\n"
+                "distances, suggested paces, HR zones, and rest days. Respect my training schedule preferences.\n\n"
                 f"Race goal: {race_goal} on {race_date}\n\n"
+                f"{prefs_text}\n\n"
                 f"Recent runs: {recent.to_dict('records')}"
             )
             st.write(call_ai(prompt))
 
-    # Tab 4: Race Simulator
+    # --- Tab 4: Race Simulator ---
     with tab4:
         st.markdown("<div class='card'><h3>Race Day Simulation</h3></div>", unsafe_allow_html=True)
         if st.button("Simulate Race Performance"):
@@ -1777,7 +1835,7 @@ def render_ai_coach_page():
             )
             st.write(call_ai(prompt))
 
-    # Tab 5: Injury Risk AI
+    # --- Tab 5: Injury Risk AI ---
     with tab5:
         st.markdown("<div class='card'><h3>AI Injury Risk</h3></div>", unsafe_allow_html=True)
         if st.button("Evaluate Injury Risk"):
@@ -1788,7 +1846,7 @@ def render_ai_coach_page():
             )
             st.write(call_ai(prompt))
 
-    # Tab 6: PR Milestones
+    # --- Tab 6: PR Milestones ---
     with tab6:
         st.markdown("<div class='card'><h3>🏆 PR Milestone Analysis</h3></div>", unsafe_allow_html=True)
         prs_all = calculate_prs(metrics)
@@ -1820,11 +1878,98 @@ Current PRs:
 """
             st.write(call_ai(prompt))
 
-    # Tab 7: Training Block
+    # --- Tab 7: Training Block (with advanced schedule controls) ---
     with tab7:
         st.markdown("<div class='card'><h3>📆 Training Block Generator</h3></div>", unsafe_allow_html=True)
-        block_length_weeks = st.slider("Block Length (weeks)", 4, 20, 12)
+
+        block_length_weeks = st.slider(
+            "Block Length (weeks)",
+            min_value=4,
+            max_value=20,
+            value=12,
+            key="block_length_weeks",
+        )
+
+        st.subheader("Training Schedule Preferences for the Block")
+
+        days_of_week = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+        block_days_per_week = st.slider(
+            "Days per week you want to run (for this block)",
+            min_value=2,
+            max_value=7,
+            value=5,
+            key="block_days_per_week",
+        )
+
+        default_block_days = ["Mon", "Tue", "Thu", "Sat", "Sun"]
+        block_training_days = st.multiselect(
+            "Which days do you want to train in this block?",
+            options=days_of_week,
+            default=default_block_days[:block_days_per_week],
+            key="block_training_days",
+        )
+
+        block_hard_days = st.multiselect(
+            "Preferred HARD workout days (tempo/intervals) in this block",
+            options=days_of_week,
+            default=["Tue", "Thu"],
+            key="block_hard_days",
+        )
+
+        block_rest_days = st.multiselect(
+            "Preferred rest days in this block",
+            options=days_of_week,
+            default=["Fri"],
+            key="block_rest_days",
+        )
+
+        block_long_run_day = st.selectbox(
+            "Primary long run day (block)",
+            options=days_of_week,
+            index=6,  # Sunday
+            key="block_long_run_day",
+        )
+
+        block_secondary_long_run = st.selectbox(
+            "Optional secondary long run day (block)",
+            options=["None"] + days_of_week,
+            index=0,
+            key="block_secondary_long_run",
+        )
+
+        block_allow_back_to_back = st.checkbox(
+            "Allow back-to-back hard days in this block",
+            value=False,
+            key="block_allow_back_to_back",
+        )
+
+        block_allow_doubles = st.checkbox(
+            "Allow double days (AM/PM) in this block",
+            value=False,
+            key="block_allow_doubles",
+        )
+
+        if len(block_training_days) != block_days_per_week:
+            st.warning(
+                f"You selected {block_days_per_week} days per week but chose "
+                f"{len(block_training_days)} training days. The AI will still try to honor both, "
+                "but you may want to align them."
+            )
+
         if st.button("Generate Training Block"):
+            prefs_text = f"""
+Training schedule preferences for the block:
+- Days per week: {block_days_per_week}
+- Training days: {", ".join(block_training_days) if block_training_days else "None specified"}
+- Key workout days: {", ".join(block_hard_days) if block_hard_days else "None specified"}
+- Rest days: {", ".join(block_rest_days) if block_rest_days else "None specified"}
+- Long run day: {block_long_run_day}
+- Secondary long run: {block_secondary_long_run}
+- Allow back-to-back hard days: {"Yes" if block_allow_back_to_back else "No"}
+- Allow doubles: {"Yes" if block_allow_doubles else "No"}
+"""
+
             prompt = f"""
 You are designing a {block_length_weeks}-week half marathon training block.
 
@@ -1842,9 +1987,17 @@ Use my existing training history and PRs to structure this block. Include each w
 - cutback weeks
 - recovery guidance
 
+Respect my training schedule preferences.
+
 Race goal: {race_goal} on {race_date}
-Training history: {df.to_dict('records')}
-PRs: {calculate_prs(metrics)}
+
+{prefs_text}
+
+Training history:
+{df.to_dict('records')}
+
+PRs:
+{calculate_prs(metrics)}
 """
             st.write(call_ai(prompt))
 
@@ -2032,7 +2185,6 @@ Include:
 def render_settings_page():
     st.title("⚙ Settings")
 
-    # Appearance
     st.markdown("<div class='card'><h3>Appearance</h3></div>", unsafe_allow_html=True)
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -2056,7 +2208,6 @@ def render_settings_page():
         )
         st.session_state["compact_mode"] = compact
 
-    # AI settings
     st.markdown("<div class='card'><h3>AI Coaching</h3></div>", unsafe_allow_html=True)
     col4, col5 = st.columns(2)
     with col4:
@@ -2076,7 +2227,6 @@ def render_settings_page():
         )
         st.session_state["ai_focus"] = focus
 
-    # Race goal & HR
     st.markdown("<div class='card'><h3>Race Goal & HR</h3></div>", unsafe_allow_html=True)
     col6, col7 = st.columns(2)
     with col6:
@@ -2102,7 +2252,6 @@ def render_settings_page():
         )
         st.session_state["weekly_goal_mi"] = weekly_goal
 
-    # Shoes
     st.markdown("<div class='card'><h3>Shoes</h3></div>", unsafe_allow_html=True)
     st.write("Track your running shoes and mileage.")
 
@@ -2142,7 +2291,6 @@ def render_settings_page():
                     retire_shoe(s["id"])
                     st.warning(f"{s['name']} retired.")
 
-    # Data export / delete
     st.markdown("<div class='card'><h3>Data</h3></div>", unsafe_allow_html=True)
     col8, col9 = st.columns(2)
     with col8:
@@ -2177,7 +2325,6 @@ def main():
     init_db_with_migration()
     inject_css()
 
-    # Sidebar
     st.sidebar.header("Navigation")
 
     st.sidebar.radio(
