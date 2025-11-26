@@ -1880,162 +1880,192 @@ Current PRs:
 
     # --- Tab 7: Training Block (with advanced schedule controls) ---
         # --- Tab 7: Training Block (with GOAL EVENT & DATE) ---
+        # --- Tab 7: Training Block (Goal-Aware Training) ---
     with tab7:
-        st.markdown("<div class='card'><h3>📆 Training Block Generator</h3></div>", unsafe_allow_html=True)
+        st.markdown("<div class='card'><h3>📆 Goal-Based Training Block Generator</h3></div>", unsafe_allow_html=True)
 
-        st.subheader("🎯 Goal Event")
+        # ======================
+        #   RACE GOAL SETTINGS
+        # ======================
+        st.subheader("Race Goal Settings")
 
-        goal_event_type = st.selectbox(
-            "What are you training for?",
-            [
-                "5K",
-                "10K",
-                "Half Marathon",
-                "Marathon",
-                "Ultra",
-                "Custom"
-            ],
-            key="tb_event_type",
+        race_types = [
+            "5K", "10K", "Half Marathon", "Marathon",
+            "50K Ultra", "50 Mile Ultra", "100K Ultra", "100 Mile Ultra"
+        ]
+        race_type = st.selectbox(
+            "What race are you training for?",
+            race_types,
+            key="block_race_type"
         )
 
-        # Custom race name
-        if goal_event_type == "Custom":
-            goal_event_name = st.text_input("Custom Event Name (e.g., 25K Trail Challenge)", key="tb_custom_event")
-        else:
-            goal_event_name = goal_event_type
-
-        goal_race_date = st.date_input(
-            "Race Date",
-            value=datetime.fromisoformat(st.session_state["race_date_str"]).date(),
-            key="tb_race_date",
+        # Goal type: Time vs Finish
+        goal_mode = st.radio(
+            "What is your goal?",
+            ["Train to Finish", "Train for a Specific Time"],
+            key="block_goal_mode"
         )
 
-        today = datetime.today().date()
-        weeks_to_race = max(1, (goal_race_date - today).days // 7)
-
-        st.subheader("📏 Block Duration")
-
-        auto_block = st.checkbox(
-            f"Auto-calculate block length based on race date (≈ {weeks_to_race} weeks)",
-            value=True,
-            key="tb_auto_block",
-        )
-
-        if auto_block:
-            block_length_weeks = weeks_to_race
-        else:
-            block_length_weeks = st.slider(
-                "Block Length (weeks)",
-                min_value=4,
-                max_value=24,
-                value=12,
-                key="block_length_weeks",
+        target_time = None
+        if goal_mode == "Train for a Specific Time":
+            target_time = st.text_input(
+                "Target finish time (HH:MM:SS)",
+                placeholder="e.g., 01:39:59 for sub-1:40 half",
+                key="block_target_time"
             )
 
-        st.subheader("Training Schedule Preferences for the Block")
+        race_date_block = st.date_input(
+            "Race Date",
+            datetime.fromisoformat(st.session_state["race_date_str"]).date(),
+            key="block_race_date"
+        )
+
+        # ======================
+        #   BLOCK LENGTH
+        # ======================
+        block_length_weeks = st.slider(
+            "Training Block Length (weeks)",
+            min_value=4,
+            max_value=28,
+            value=12,
+            key="block_length_weeks"
+        )
+
+        # ======================
+        #   TAPER OPTIONS
+        # ======================
+        st.subheader("Taper Options")
+
+        taper_length = st.selectbox(
+            "Length of taper",
+            ["1 week", "10 days", "2 weeks", "3 weeks"],
+            index=2,
+            key="block_taper_length"
+        )
+
+        mid_block_cutback = st.checkbox(
+            "Include a mid-block cutback week (Week 6 or 8)",
+            value=True,
+            key="block_cutback"
+        )
+
+        # ======================
+        #   SCHEDULE PREFERENCES
+        # ======================
+        st.subheader("Training Schedule Preferences")
 
         days_of_week = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
         block_days_per_week = st.slider(
-            "Days per week you want to run (for this block)",
-            min_value=2,
-            max_value=7,
-            value=5,
-            key="block_days_per_week",
+            "Days per week",
+            2, 7, 5,
+            key="block_days_per_week"
         )
 
-        default_block_days = ["Mon", "Tue", "Thu", "Sat", "Sun"]
         block_training_days = st.multiselect(
-            "Which days do you want to train in this block?",
-            options=days_of_week,
-            default=default_block_days[:block_days_per_week],
-            key="block_training_days",
+            "Training Days",
+            days_of_week,
+            default=["Mon", "Tue", "Thu", "Sat", "Sun"][:block_days_per_week],
+            key="block_training_days"
         )
 
         block_hard_days = st.multiselect(
-            "Preferred HARD workout days (tempo/intervals)",
-            options=days_of_week,
+            "Preferred Hard Days (Tempo / Intervals)",
+            days_of_week,
             default=["Tue", "Thu"],
-            key="block_hard_days",
+            key="block_hard_days"
         )
 
         block_rest_days = st.multiselect(
-            "Preferred rest days",
-            options=days_of_week,
+            "Rest Days",
+            days_of_week,
             default=["Fri"],
-            key="block_rest_days",
+            key="block_rest_days"
         )
 
         block_long_run_day = st.selectbox(
-            "Primary long run day",
-            options=days_of_week,
+            "Long Run Day",
+            days_of_week,
             index=6,
-            key="block_long_run_day",
+            key="block_long_run_day"
         )
 
         block_secondary_long_run = st.selectbox(
-            "Optional secondary long run day",
-            options=["None"] + days_of_week,
+            "Optional Secondary Long Run",
+            ["None"] + days_of_week,
             index=0,
-            key="block_secondary_long_run",
+            key="block_secondary_long_run"
         )
 
         block_allow_back_to_back = st.checkbox(
             "Allow back-to-back hard days",
-            value=False,
-            key="block_allow_back_to_back",
+            False,
+            key="block_allow_back_to_back"
         )
 
         block_allow_doubles = st.checkbox(
             "Allow double days (AM/PM)",
-            value=False,
-            key="block_allow_doubles",
+            False,
+            key="block_allow_doubles"
         )
 
-        if len(block_training_days) != block_days_per_week:
-            st.warning(
-                f"You selected {block_days_per_week} days per week but chose "
-                f"{len(block_training_days)} training days. The AI will still try to honor both."
-            )
-
+        # ======================
+        #   GENERATE BLOCK
+        # ======================
         if st.button("Generate Training Block"):
             prefs_text = f"""
-Training schedule preferences for the block:
-- Days per week: {block_days_per_week}
-- Training days: {", ".join(block_training_days)}
-- Key workout days: {", ".join(block_hard_days)}
-- Rest days: {", ".join(block_rest_days)}
-- Long run day: {block_long_run_day}
-- Secondary long run: {block_secondary_long_run}
-- Allow back-to-back hard days: {"Yes" if block_allow_back_to_back else "No"}
-- Allow doubles: {"Yes" if block_allow_doubles else "No"}
+Race Type: {race_type}
+Goal Mode: {goal_mode}
+Target Time: {target_time if target_time else "N/A"}
+Race Date: {race_date_block}
+
+Block Length: {block_length_weeks} weeks
+Taper Length: {taper_length}
+Mid-Block Cutback Week: {"Yes" if mid_block_cutback else "No"}
+
+Training Days Per Week: {block_days_per_week}
+Training Days: {", ".join(block_training_days)}
+Hard Days: {", ".join(block_hard_days)}
+Rest Days: {", ".join(block_rest_days)}
+Long Run Day: {block_long_run_day}
+Secondary Long Run: {block_secondary_long_run}
+
+Allow Back-to-Back Hard Days: {"Yes" if block_allow_back_to_back else "No"}
+Allow Doubles: {"Yes" if block_allow_doubles else "No"}
 """
 
             prompt = f"""
-You are designing a {block_length_weeks}-week training block leading into:
+You are a world-class running coach. Build a {block_length_weeks}-week **training block**
+for this athlete.
 
-**Event:** {goal_event_name}
-**Date:** {goal_race_date}
+### ATHLETE GOAL
+- Race: {race_type}
+- Goal: {goal_mode}
+- Target Time: {target_time if target_time else "None — Finish Only"}
+- Race Date: {race_date_block}
 
-Block should include:
-- Base → Build → Peak → Taper phases
-- Weekly mileage targets
-- Long run progression tailored to the event type
-- Speed work appropriate to the race distance
-- Recovery weeks
-- Fatigue management
-- Strength training recommendations
-- Paces or HR zones for each workout
+### TAPER
+- Taper duration: {taper_length}
+- Include mid-block cutback: {"Yes" if mid_block_cutback else "No"}
 
-Use my existing training history and PRs to guide the intensity.
-
+### TRAINING PREFERENCES
 {prefs_text}
 
-Training history:
+### REQUIREMENTS FOR THE PLAN
+1. Divide training into **Base → Build → Peak → Taper**
+2. Weekly mileage must progress gradually.
+3. Include **cutback weeks**.
+4. Integrate preferred training days and long-run placement.
+5. For "Train to Finish", focus on aerobic conditioning, long runs, fueling, and durability.
+6. For time goals, include appropriate **paces**, **threshold work**, **tempos**, **intervals**, and **peak sharpening**.
+7. Provide **weekly mileage**, **key workouts**, **long run details**, and **purpose of each phase**.
+8. Make the plan realistic based on the athlete's training history.
+
+### Training History:
 {df.to_dict('records')}
 
-PRs:
-{calculate_prs(metrics)}
+### Athlete PRs:
+{calculate_prs(prepare_metrics_df(df))}
 """
 
             st.write(call_ai(prompt))
