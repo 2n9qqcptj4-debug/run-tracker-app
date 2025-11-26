@@ -2,6 +2,7 @@ import streamlit as st
 
 from styles import inject_css
 from db import init_db
+from utils import init_session_state
 from pages import (
     home,
     feed,
@@ -14,10 +15,11 @@ from pages import (
     pace_zones,
 )
 
+
 def main():
     st.set_page_config(page_title="Run Tracker & AI Coach", layout="wide")
 
-    # Initialize database and CSS theme
+    init_session_state()
     init_db()
     inject_css()
 
@@ -52,4 +54,4 @@ def main():
     elif page == "Compare Runs":
         compare_runs.render()
     elif page == "Pace Zones":
-        pac
+        pace_zones.render()
