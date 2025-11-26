@@ -1879,16 +1879,58 @@ Current PRs:
             st.write(call_ai(prompt))
 
     # --- Tab 7: Training Block (with advanced schedule controls) ---
+        # --- Tab 7: Training Block (with GOAL EVENT & DATE) ---
     with tab7:
         st.markdown("<div class='card'><h3>📆 Training Block Generator</h3></div>", unsafe_allow_html=True)
 
-        block_length_weeks = st.slider(
-            "Block Length (weeks)",
-            min_value=4,
-            max_value=20,
-            value=12,
-            key="block_length_weeks",
+        st.subheader("🎯 Goal Event")
+
+        goal_event_type = st.selectbox(
+            "What are you training for?",
+            [
+                "5K",
+                "10K",
+                "Half Marathon",
+                "Marathon",
+                "Ultra",
+                "Custom"
+            ],
+            key="tb_event_type",
         )
+
+        # Custom race name
+        if goal_event_type == "Custom":
+            goal_event_name = st.text_input("Custom Event Name (e.g., 25K Trail Challenge)", key="tb_custom_event")
+        else:
+            goal_event_name = goal_event_type
+
+        goal_race_date = st.date_input(
+            "Race Date",
+            value=datetime.fromisoformat(st.session_state["race_date_str"]).date(),
+            key="tb_race_date",
+        )
+
+        today = datetime.today().date()
+        weeks_to_race = max(1, (goal_race_date - today).days // 7)
+
+        st.subheader("📏 Block Duration")
+
+        auto_block = st.checkbox(
+            f"Auto-calculate block length based on race date (≈ {weeks_to_race} weeks)",
+            value=True,
+            key="tb_auto_block",
+        )
+
+        if auto_block:
+            block_length_weeks = weeks_to_race
+        else:
+            block_length_weeks = st.slider(
+                "Block Length (weeks)",
+                min_value=4,
+                max_value=24,
+                value=12,
+                key="block_length_weeks",
+            )
 
         st.subheader("Training Schedule Preferences for the Block")
 
@@ -1911,41 +1953,41 @@ Current PRs:
         )
 
         block_hard_days = st.multiselect(
-            "Preferred HARD workout days (tempo/intervals) in this block",
+            "Preferred HARD workout days (tempo/intervals)",
             options=days_of_week,
             default=["Tue", "Thu"],
             key="block_hard_days",
         )
 
         block_rest_days = st.multiselect(
-            "Preferred rest days in this block",
+            "Preferred rest days",
             options=days_of_week,
             default=["Fri"],
             key="block_rest_days",
         )
 
         block_long_run_day = st.selectbox(
-            "Primary long run day (block)",
+            "Primary long run day",
             options=days_of_week,
-            index=6,  # Sunday
+            index=6,
             key="block_long_run_day",
         )
 
         block_secondary_long_run = st.selectbox(
-            "Optional secondary long run day (block)",
+            "Optional secondary long run day",
             options=["None"] + days_of_week,
             index=0,
             key="block_secondary_long_run",
         )
 
         block_allow_back_to_back = st.checkbox(
-            "Allow back-to-back hard days in this block",
+            "Allow back-to-back hard days",
             value=False,
             key="block_allow_back_to_back",
         )
 
         block_allow_doubles = st.checkbox(
-            "Allow double days (AM/PM) in this block",
+            "Allow double days (AM/PM)",
             value=False,
             key="block_allow_doubles",
         )
@@ -1953,17 +1995,16 @@ Current PRs:
         if len(block_training_days) != block_days_per_week:
             st.warning(
                 f"You selected {block_days_per_week} days per week but chose "
-                f"{len(block_training_days)} training days. The AI will still try to honor both, "
-                "but you may want to align them."
+                f"{len(block_training_days)} training days. The AI will still try to honor both."
             )
 
         if st.button("Generate Training Block"):
             prefs_text = f"""
 Training schedule preferences for the block:
 - Days per week: {block_days_per_week}
-- Training days: {", ".join(block_training_days) if block_training_days else "None specified"}
-- Key workout days: {", ".join(block_hard_days) if block_hard_days else "None specified"}
-- Rest days: {", ".join(block_rest_days) if block_rest_days else "None specified"}
+- Training days: {", ".join(block_training_days)}
+- Key workout days: {", ".join(block_hard_days)}
+- Rest days: {", ".join(block_rest_days)}
 - Long run day: {block_long_run_day}
 - Secondary long run: {block_secondary_long_run}
 - Allow back-to-back hard days: {"Yes" if block_allow_back_to_back else "No"}
@@ -1971,25 +2012,22 @@ Training schedule preferences for the block:
 """
 
             prompt = f"""
-You are designing a {block_length_weeks}-week half marathon training block.
+You are designing a {block_length_weeks}-week training block leading into:
 
-Phases:
-- Base
-- Build
-- Peak
-- Taper
+**Event:** {goal_event_name}
+**Date:** {goal_race_date}
 
-Use my existing training history and PRs to structure this block. Include each week's:
-- total mileage
-- key workouts
-- easy runs
-- long runs
-- cutback weeks
-- recovery guidance
+Block should include:
+- Base → Build → Peak → Taper phases
+- Weekly mileage targets
+- Long run progression tailored to the event type
+- Speed work appropriate to the race distance
+- Recovery weeks
+- Fatigue management
+- Strength training recommendations
+- Paces or HR zones for each workout
 
-Respect my training schedule preferences.
-
-Race goal: {race_goal} on {race_date}
+Use my existing training history and PRs to guide the intensity.
 
 {prefs_text}
 
@@ -1999,8 +2037,8 @@ Training history:
 PRs:
 {calculate_prs(metrics)}
 """
-            st.write(call_ai(prompt))
 
+            st.write(call_ai(prompt))
 
 # =========================
 # COMPARE RUNS
