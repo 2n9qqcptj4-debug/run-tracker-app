@@ -1,13 +1,11 @@
-import os
 import sqlite3
 from datetime import datetime, timedelta, date
 
+import altair as alt
 import pandas as pd
 import streamlit as st
-import altair as alt
 
 # ---------- OpenAI client ----------
-
 try:
     from openai import OpenAI
     client = OpenAI()
@@ -23,13 +21,13 @@ def init_session_state():
     if "page" not in st.session_state:
         st.session_state["page"] = "Home"
     if "theme" not in st.session_state:
-        st.session_state["theme"] = "dark"  # 'dark' or 'light'
+        st.session_state["theme"] = "dark"
     if "units" not in st.session_state:
-        st.session_state["units"] = "mi"    # 'mi' or 'km'
+        st.session_state["units"] = "mi"
     if "ai_verbosity" not in st.session_state:
-        st.session_state["ai_verbosity"] = "normal"  # 'short','normal','detailed'
+        st.session_state["ai_verbosity"] = "normal"
     if "ai_focus" not in st.session_state:
-        st.session_state["ai_focus"] = "balanced"    # 'performance','injury','balanced'
+        st.session_state["ai_focus"] = "balanced"
     if "race_goal" not in st.session_state:
         st.session_state["race_goal"] = "Pittsburgh Half – Sub 1:40"
     if "hr_max" not in st.session_state:
@@ -69,7 +67,7 @@ def inject_css():
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
-    html, body, [class*="css"]  {{
+    html, body, [class*="css"] {{
         font-family: 'Inter', sans-serif;
         background-color: {bg};
         color: {text};
@@ -86,51 +84,6 @@ def inject_css():
         letter-spacing: -0.02em;
     }}
 
-    /* NAVBAR */
-    .top-nav {{
-        position: sticky;
-        top: 0;
-        z-index: 100;
-        background: linear-gradient(90deg, {bg2}, {bg});
-        padding: 0.5rem 1rem 0.4rem 1rem;
-        border-bottom: 1px solid {border};
-        margin-bottom: 0.8rem;
-        backdrop-filter: blur(10px);
-    }}
-
-    .top-nav-inner {{
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        max-width: 1200px;
-        margin: 0 auto;
-    }}
-
-    .nav-left {{
-        display: flex;
-        align-items: center;
-        gap: 0.75rem;
-    }}
-
-    .nav-title {{
-        font-weight: 600;
-        font-size: 1.1rem;
-    }}
-
-    .nav-links {{
-        display: flex;
-        gap: 0.3rem;
-        margin-left: 1.5rem;
-    }}
-
-    .nav-right {{
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-        font-size: 0.8rem;
-    }}
-
-    /* Cards */
     .card {{
         background-color: {card_bg};
         padding: {card_padding};
@@ -194,32 +147,34 @@ def inject_css():
     .tag-Race {{ background-color: #A855F7; }}
     .tag-Other {{ background-color: #6B7280; }}
 
-    .stButton>button {{
-        border-radius: 999px !important;
-        padding: 0.35rem 1.0rem !important;
-        font-weight: 600 !important;
-    }}
-
-    input, textarea, select {{
-        border-radius: 8px !important;
-    }}
-
-    .stDataFrame {{
+    .pr-banner {{
+        background: linear-gradient(90deg, #ffb300, #ffdd66);
+        padding: 12px 16px;
+        margin: 12px 0;
         border-radius: 10px;
-        overflow: hidden;
-    }}
-
-    section[data-testid="stSidebar"] {{
-        padding-top: 2rem;
-    }}
-
-    .section-divider {{
+        font-weight: bold;
+        font-size: 18px;
+        color: black;
         text-align: center;
-        opacity: 0.6;
-        margin: 0.8rem 0 0.4rem 0;
-        font-size: 0.75rem;
-        letter-spacing: 0.12em;
-        text-transform: uppercase;
+    }}
+
+    .pr-mini {{
+        background: #ffe29a;
+        padding: 6px 10px;
+        border-radius: 8px;
+        display: inline-block;
+        margin-left: 8px;
+        font-size: 14px;
+        font-weight: bold;
+    }}
+
+    .pr-badge {{
+        background: #ffcc00;
+        padding: 6px 12px;
+        margin-top: 6px;
+        border-radius: 8px;
+        font-weight: bold;
+        display: inline-block;
     }}
 
     </style>
@@ -265,6 +220,7 @@ def init_db():
             nutrition_notes TEXT,
             vo2max REAL,
             hrv INTEGER,
+            shoe_id INTEGER,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         )
         """
@@ -272,10 +228,43 @@ def init_db():
 
     conn.commit()
     conn.close()
-# ---------- Utilities & analytics ----------
 
-def duration_to_minutes(time_str):
-    """Convert MM:SS or HH:MM:SS into total minutes."""
+
+def migrate_db():
+    conn = get_conn()
+    cur = conn.cursor()
+
+    # Shoes table
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS shoes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            brand TEXT,
+            start_date TEXT,
+            retired INTEGER DEFAULT 0
+        )
+        """
+    )
+
+    # ensure shoe_id column exists
+    cur.execute("PRAGMA table_info(runs)")
+    cols = [row[1] for row in cur.fetchall()]
+    if "shoe_id" not in cols:
+        cur.execute("ALTER TABLE runs ADD COLUMN shoe_id INTEGER")
+
+    conn.commit()
+    conn.close()
+
+
+def init_db_with_migration():
+    init_db()
+    migrate_db()
+
+
+# ---------- Core utilities & analytics ----------
+
+def duration_to_minutes(time_str: str | None):
     if not time_str:
         return None
     parts = time_str.strip().split(":")
@@ -283,64 +272,54 @@ def duration_to_minutes(time_str):
         parts = [int(p) for p in parts]
     except ValueError:
         return None
-
-    if len(parts) == 2:      # MM:SS
+    if len(parts) == 2:
         m, s = parts
-        return m + s / 60.0
-    if len(parts) == 3:      # HH:MM:SS
+        return m + s / 60
+    if len(parts) == 3:
         h, m, s = parts
-        return h * 60 + m + s / 60.0
-
+        return h * 60 + m + s / 60
     return None
 
 
-def prepare_metrics_df(df):
-    """Normalize and compute derived metrics."""
+def pace_to_float(pace_str: str | None):
+    if not pace_str or ":" not in pace_str:
+        return None
+    try:
+        m, s = pace_str.split(":")
+        return int(m) + int(s) / 60
+    except Exception:
+        return None
+
+
+def prepare_metrics_df(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
-
     m = df.copy()
-
-    # Date normalization
     m["date_dt"] = pd.to_datetime(m["date"], errors="coerce")
     m = m.dropna(subset=["date_dt"])
     m["date"] = m["date_dt"].dt.date
-
-    # Start of week (Monday)
     m["week_start"] = m["date_dt"] - pd.to_timedelta(m["date_dt"].dt.weekday, unit="D")
     m["week_start"] = m["week_start"].dt.date
 
-    # Training load = effort × duration
     m["training_load"] = m["effort"].fillna(0) * m["duration_minutes"].fillna(0)
 
-    # Pace (min/mi)
     m["pace_min_per_mile"] = None
-    mask = (
-        m["distance"].notna()
-        & (m["distance"] > 0)
-        & m["duration_minutes"].notna()
-    )
-    m.loc[mask, "pace_min_per_mile"] = (
-        m.loc[mask, "duration_minutes"] / m.loc[mask, "distance"]
-    )
+    mask = (m["distance"].notna()) & (m["distance"] > 0) & m["duration_minutes"].notna()
+    m.loc[mask, "pace_min_per_mile"] = m.loc[mask, "duration_minutes"] / m.loc[mask, "distance"]
 
-    # Running Stress Score (RSS)
     hr_max = float(st.session_state.get("hr_max", 190))
     m["rss"] = None
     mask_rss = m["duration_minutes"].notna() & m["avg_hr"].notna()
     m.loc[mask_rss, "rss"] = (
-        m.loc[mask_rss, "duration_minutes"]
-        * (m.loc[mask_rss, "avg_hr"] / hr_max) ** 2
+        m.loc[mask_rss, "duration_minutes"] * (m.loc[mask_rss, "avg_hr"] / hr_max) ** 2
     )
 
     return m
 
 
-def compute_daily_load(metrics):
-    """Summarize distance, training load, RSS per day."""
+def compute_daily_load(metrics: pd.DataFrame) -> pd.DataFrame:
     if metrics.empty:
         return metrics
-
     daily = (
         metrics.groupby("date_dt", as_index=False)
         .agg(
@@ -352,11 +331,9 @@ def compute_daily_load(metrics):
     return daily
 
 
-def compute_fitness_fatigue(daily):
-    """Compute CTL/ATL/TSB (fitness, fatigue, form)."""
+def compute_fitness_fatigue(daily: pd.DataFrame) -> pd.DataFrame:
     if daily.empty:
         return daily
-
     d = daily.copy().sort_values("date_dt")
     d["CTL"] = d["training_load"].rolling(window=42, min_periods=1).mean()
     d["ATL"] = d["training_load"].rolling(window=7, min_periods=1).mean()
@@ -364,30 +341,25 @@ def compute_fitness_fatigue(daily):
     return d
 
 
-def compute_efficiency_score(metrics):
-    """Simple efficiency metric combining distance, duration, and HR."""
+def compute_efficiency_score(metrics: pd.DataFrame) -> pd.DataFrame:
     m = metrics.copy()
     m["efficiency_score"] = None
-
     mask = (
         m["distance"].notna()
         & (m["distance"] > 0)
         & m["duration_minutes"].notna()
         & m["avg_hr"].notna()
     )
-
     m.loc[mask, "efficiency_score"] = (
         m.loc[mask, "distance"]
         / (m.loc[mask, "duration_minutes"] / 60.0)
         / m.loc[mask, "avg_hr"]
         * 1000.0
     )
-
     return m
 
 
-def add_hr_zones(metrics, hr_max=190):
-    """Assign each run to an HR zone based on avg HR."""
+def add_hr_zones(metrics: pd.DataFrame, hr_max=190) -> pd.DataFrame:
     if metrics.empty or "avg_hr" not in metrics.columns:
         return metrics
 
@@ -406,42 +378,200 @@ def add_hr_zones(metrics, hr_max=190):
     return m
 
 
-def compute_streaks(metrics):
-    """Compute current and longest run streaks."""
+def compute_streaks(metrics: pd.DataFrame):
     if metrics.empty:
         return 0, 0
-
     dates = sorted(set(metrics["date_dt"].dt.date))
     if not dates:
         return 0, 0
-
     longest = 1
     current = 1
-
     for i in range(1, len(dates)):
         if (dates[i] - dates[i - 1]).days == 1:
             current += 1
             longest = max(longest, current)
         else:
             current = 1
-
     return current, longest
 
 
-def convert_distance_for_display(distance_mi):
-    """Convert between miles and km based on user setting."""
+def convert_distance_for_display(distance_mi: float | None):
     units = st.session_state.get("units", "mi")
     if distance_mi is None:
         return None, units
     if units == "km":
         return distance_mi * 1.60934, "km"
     return distance_mi, "mi"
-    
 
+
+# ---------- PR / Race Prediction / Zones helpers ----------
+
+def calculate_prs(df: pd.DataFrame):
+    prs = {}
+    if df.empty:
+        return prs
+
+    df = df.copy()
+    df["pace_num"] = df["avg_pace"].apply(pace_to_float)
+
+    prs["longest_distance"] = df["distance"].max()
+
+    pace_df = df[df["pace_num"].notna()]
+    if not pace_df.empty:
+        prs["fastest_pace"] = pace_df["pace_num"].min()
+
+    mile_runs = df[df["distance"] >= 1.0]
+    if not mile_runs.empty:
+        prs["fastest_mile"] = (mile_runs["duration_minutes"] / mile_runs["distance"]).min()
+
+    fivek_runs = df[df["distance"] >= 3.11]
+    if not fivek_runs.empty:
+        prs["fastest_5k"] = (
+            fivek_runs["duration_minutes"] / fivek_runs["distance"] * 3.11
+        ).min()
+
+    tenk_runs = df[df["distance"] >= 6.22]
+    if not tenk_runs.empty:
+        prs["fastest_10k"] = (
+            tenk_runs["duration_minutes"] / tenk_runs["distance"] * 6.22
+        ).min()
+
+    half_runs = df[df["distance"] >= 13.1]
+    if not half_runs.empty:
+        prs["fastest_half"] = (
+            half_runs["duration_minutes"] / half_runs["distance"] * 13.1
+        ).min()
+
+    df["date_dt"] = pd.to_datetime(df["date"])
+    df["week"] = df["date_dt"].dt.isocalendar().week
+    df["year"] = df["date_dt"].dt.year
+
+    weekly = df.groupby(["year", "week"])["distance"].sum()
+    prs["highest_weekly_mileage"] = weekly.max()
+
+    df["month"] = df["date_dt"].dt.month
+    monthly = df.groupby(["year", "month"])["distance"].sum()
+    prs["highest_monthly_mileage"] = monthly.max()
+
+    return prs
+
+
+def detect_pr_improvements(prs_before, prs_after):
+    if prs_after is None:
+        return []
+    labels = {
+        "longest_distance": "Longest Run",
+        "fastest_pace": "Fastest Overall Pace",
+        "fastest_mile": "Fastest Mile",
+        "fastest_5k": "Fastest 5K",
+        "fastest_10k": "Fastest 10K",
+        "fastest_half": "Fastest Half Marathon",
+        "highest_weekly_mileage": "Highest Weekly Mileage",
+        "highest_monthly_mileage": "Highest Monthly Mileage",
+    }
+    improvements = []
+    for key, new_val in prs_after.items():
+        if new_val is None or pd.isna(new_val):
+            continue
+        old_val = prs_before.get(key) if prs_before else None
+        if old_val is None or pd.isna(old_val):
+            improvements.append(labels.get(key, key))
+            continue
+        if "fastest" in key:
+            if new_val < old_val - 1e-6:
+                improvements.append(labels.get(key, key))
+        else:
+            if new_val > old_val + 1e-6:
+                improvements.append(labels.get(key, key))
+    return improvements
+
+
+def predict_race_times(df: pd.DataFrame):
+    if df.empty:
+        return None
+    df = df.copy()
+    df["pace_num"] = df["avg_pace"].apply(pace_to_float)
+    best_pace = df["pace_num"].min()
+    vo2 = df["vo2max"].dropna().mean() if "vo2max" in df else None
+    vo2_factor = (50 / vo2) if vo2 else 1.0
+    daily = compute_daily_load(df)
+    load = compute_fitness_fatigue(daily)
+    tsb = load["TSB"].iloc[-1] if not load.empty else 0
+    fatigue_factor = 1 - (tsb / 200)
+    effective_pace = best_pace * vo2_factor * fatigue_factor
+    predictions = {
+        "5K": effective_pace * 3.11,
+        "10K": effective_pace * 6.22,
+        "Half": effective_pace * 13.1,
+        "Marathon": effective_pace * 26.2,
+    }
+    return predictions
+
+
+def generate_race_prediction_series(df: pd.DataFrame):
+    out = []
+    if df.empty:
+        return pd.DataFrame(out)
+    df = df.copy().sort_values("date_dt")
+    for _, row in df.iterrows():
+        sub = df[df["date_dt"] <= row["date_dt"]]
+        pred = predict_race_times(sub)
+        if pred:
+            out.append(
+                {
+                    "date": row["date_dt"],
+                    "5K": pred["5K"],
+                    "10K": pred["10K"],
+                    "Half": pred["Half"],
+                    "Marathon": pred["Marathon"],
+                }
+            )
+    return pd.DataFrame(out)
+
+
+# Pace zones
+
+def estimate_threshold_pace(prs):
+    if not prs:
+        return None
+    mile = prs.get("fastest_mile")
+    fivek = prs.get("fastest_5k")
+    if fivek:
+        return fivek / 3.11 * 0.98
+    if mile:
+        return mile * 1.15
+    return None
+
+
+def estimate_easy_pace(best_pace):
+    return best_pace + 1.0, best_pace + 2.0
+
+
+def estimate_tempo_pace(threshold_pace):
+    if threshold_pace:
+        return threshold_pace * 0.97, threshold_pace * 1.02
+    return None
+
+
+def estimate_interval_pace(best_pace):
+    return best_pace * 0.90, best_pace * 0.95
+
+
+def estimate_rep_pace(best_pace):
+    return best_pace * 0.80, best_pace * 0.90
+
+
+def calculate_hr_zones(hr_max):
+    return {
+        "Zone 1 (Recovery)": (0.50 * hr_max, 0.60 * hr_max),
+        "Zone 2 (Easy / Aerobic)": (0.60 * hr_max, 0.70 * hr_max),
+        "Zone 3 (Tempo)": (0.70 * hr_max, 0.80 * hr_max),
+        "Zone 4 (Threshold)": (0.80 * hr_max, 0.90 * hr_max),
+        "Zone 5 (VO2 Max)": (0.90 * hr_max, 1.00 * hr_max),
+    }
 # ---------- AI helpers ----------
 
 def ensure_openai_client():
-    """Ensure OpenAI client is initialized."""
     global client
     if client is None:
         try:
@@ -452,16 +582,13 @@ def ensure_openai_client():
     return client
 
 
-def call_ai(prompt):
-    """Unified helper to call OpenAI with the app's settings."""
+def call_ai(prompt: str):
     c = ensure_openai_client()
     if c is None:
-        return "OpenAI client not installed. Install 'openai' and set OPENAI_API_KEY."
-
+        return "OpenAI client not available. Install 'openai' and set OPENAI_API_KEY."
     verbosity = st.session_state.get("ai_verbosity", "normal")
     focus = st.session_state.get("ai_focus", "balanced")
     style = f"Verbosity: {verbosity}. Focus: {focus}."
-
     try:
         resp = c.chat.completions.create(
             model="gpt-4o-mini",
@@ -476,10 +603,159 @@ def call_ai(prompt):
         return f"Error calling AI: {e}"
 
 
+# ---------- DB operations for runs & shoes ----------
+
+def insert_run(data: dict):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO runs
+        (date, run_type, distance, duration_minutes, avg_pace, splits,
+         avg_hr, max_hr, hr_by_segment, cadence, elevation_gain, effort,
+         terrain, weather, how_felt, pain, sleep_hours, stress,
+         nutrition_notes, vo2max, hrv, shoe_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            data["date"],
+            data["run_type"],
+            data["distance"],
+            data["duration_minutes"],
+            data["avg_pace"],
+            data["splits"],
+            data["avg_hr"],
+            data["max_hr"],
+            data["hr_by_segment"],
+            data["cadence"],
+            data["elevation_gain"],
+            data["effort"],
+            data["terrain"],
+            data["weather"],
+            data["how_felt"],
+            data["pain"],
+            data["sleep_hours"],
+            data["stress"],
+            data["nutrition_notes"],
+            data["vo2max"],
+            data["hrv"],
+            data["shoe_id"],
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def update_run(run_id, data):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        UPDATE runs SET
+            date = ?,
+            run_type = ?,
+            distance = ?,
+            duration_minutes = ?,
+            avg_pace = ?,
+            splits = ?,
+            avg_hr = ?,
+            max_hr = ?,
+            hr_by_segment = ?,
+            cadence = ?,
+            elevation_gain = ?,
+            effort = ?,
+            terrain = ?,
+            weather = ?,
+            how_felt = ?,
+            pain = ?,
+            sleep_hours = ?,
+            stress = ?,
+            nutrition_notes = ?,
+            vo2max = ?,
+            hrv = ?,
+            shoe_id = ?
+        WHERE id = ?
+        """,
+        (
+            data["date"],
+            data["run_type"],
+            data["distance"],
+            data["duration_minutes"],
+            data["avg_pace"],
+            data["splits"],
+            data["avg_hr"],
+            data["max_hr"],
+            data["hr_by_segment"],
+            data["cadence"],
+            data["elevation_gain"],
+            data["effort"],
+            data["terrain"],
+            data["weather"],
+            data["how_felt"],
+            data["pain"],
+            data["sleep_hours"],
+            data["stress"],
+            data["nutrition_notes"],
+            data["vo2max"],
+            data["hrv"],
+            data["shoe_id"],
+            run_id,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def delete_run(run_id):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM runs WHERE id = ?", (run_id,))
+    conn.commit()
+    conn.close()
+
+
+def fetch_runs():
+    conn = get_conn()
+    df = pd.read_sql_query("SELECT * FROM runs ORDER BY date ASC", conn)
+    conn.close()
+    return df
+
+
+def insert_shoe(name, brand, start_date):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO shoes (name, brand, start_date, retired)
+        VALUES (?, ?, ?, 0)
+        """,
+        (name, brand, start_date),
+    )
+    conn.commit()
+    conn.close()
+
+
+def fetch_shoes(include_retired=False):
+    conn = get_conn()
+    if include_retired:
+        df = pd.read_sql_query("SELECT * FROM shoes ORDER BY id DESC", conn)
+    else:
+        df = pd.read_sql_query("SELECT * FROM shoes WHERE retired = 0 ORDER BY id DESC", conn)
+    conn.close()
+    return df
+
+
+def retire_shoe(shoe_id):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("UPDATE shoes SET retired = 1 WHERE id = ?", (shoe_id,))
+    conn.commit()
+    conn.close()
+
+
 # ---------- Garmin CSV parser ----------
 
-def build_run_from_garmin_df(df):
-    """Attempt to parse Garmin CSV fields and convert into a standard run entry."""
+def build_run_from_garmin_df(df: pd.DataFrame):
     if df.empty:
         return None, "CSV appears to be empty."
 
@@ -492,16 +768,13 @@ def build_run_from_garmin_df(df):
                 return row[n]
         return None
 
-    # Date parsing
     date_val = get_val("Start Time", "Start", "Date", "Timestamp")
     date_iso = datetime.today().date().isoformat()
-
     if date_val is not None:
         dt = pd.to_datetime(str(date_val), errors="coerce")
         if pd.notna(dt):
             date_iso = dt.date().isoformat()
 
-    # Distance extraction
     distance = None
     for c in cols:
         if "distance" in c.lower():
@@ -515,7 +788,6 @@ def build_run_from_garmin_df(df):
                 pass
             break
 
-    # Duration extraction
     duration_minutes = None
     for c in cols:
         if any(x in c.lower() for x in ("elapsed", "duration", "time")):
@@ -531,14 +803,12 @@ def build_run_from_garmin_df(df):
                 pass
             break
 
-    # Pace
     avg_pace = None
     for c in cols:
         if "pace" in c.lower():
             avg_pace = str(row[c])
             break
 
-    # HR
     avg_hr = get_val("Average Heart Rate", "Avg HR", "Average HR")
     try:
         avg_hr = int(float(avg_hr)) if avg_hr is not None else None
@@ -551,28 +821,24 @@ def build_run_from_garmin_df(df):
     except Exception:
         max_hr = None
 
-    # Cadence
     cadence = get_val("Average Run Cadence", "Avg Run Cadence", "Run Cadence")
     try:
         cadence = int(float(cadence)) if cadence is not None else None
     except Exception:
         cadence = None
 
-    # Elevation
     elevation_gain = get_val("Elevation Gain", "Total Ascent", "Ascent")
     try:
         elevation_gain = int(float(elevation_gain)) if elevation_gain is not None else None
     except Exception:
         elevation_gain = None
 
-    # VO2
     vo2 = get_val("VO2 Max", "VO2Max")
     try:
         vo2 = float(vo2) if vo2 is not None else None
     except Exception:
         vo2 = None
 
-    # HRV
     hrv = get_val("HRV", "HRV (ms)")
     try:
         hrv = int(hrv) if hrv is not None else None
@@ -601,6 +867,7 @@ def build_run_from_garmin_df(df):
         "nutrition_notes": "",
         "vo2max": vo2,
         "hrv": hrv,
+        "shoe_id": None,
     }
 
     warnings = []
@@ -618,50 +885,9 @@ def build_run_from_garmin_df(df):
         msg += " " + " ".join(warnings)
 
     return data, msg
-# ---------- Navbar ----------
-
-def render_navbar():
-    st.markdown(
-        """
-        <div class="top-nav">
-            <div class="top-nav-inner">
-                <div class="nav-left">
-                    <span class="nav-title">🏃 Run Tracker + AI Coach</span>
-                    <div class="nav-links">
-                        <a href="#" onclick="window.location.search='?page=Home'" style="text-decoration:none;">
-                            <button class="css-1q8dd3e edgvbvh10">Home</button>
-                        </a>
-                        <a href="#" onclick="window.location.search='?page=Feed'" style="text-decoration:none;">
-                            <button class="css-1q8dd3e edgvbvh10">Feed</button>
-                        </a>
-                        <a href="#" onclick="window.location.search='?page=Log%20a%20Run'" style="text-decoration:none;">
-                            <button class="css-1q8dd3e edgvbvh10">Log Run</button>
-                        </a>
-                        <a href="#" onclick="window.location.search='?page=Dashboard'" style="text-decoration:none;">
-                            <button class="css-1q8dd3e edgvbvh10">Dashboard</button>
-                        </a>
-                        <a href="#" onclick="window.location.search='?page=Garmin%20Import'" style="text-decoration:none;">
-                            <button class="css-1q8dd3e edgvbvh10">Garmin Import</button>
-                        </a>
-                        <a href="#" onclick="window.location.search='?page=AI%20Coach'" style="text-decoration:none;">
-                            <button class="css-1q8dd3e edgvbvh10">AI Coach</button>
-                        </a>
-                        <a href="#" onclick="window.location.search='?page=Compare%20Runs'" style="text-decoration:none;">
-                            <button class="css-1q8dd3e edgvbvh10">Compare</button>
-                        </a>
-                        <a href="#" onclick="window.location.search='?page=Settings'" style="text-decoration:none;">
-                            <button class="css-1q8dd3e edgvbvh10">Settings</button>
-                        </a>
-                    </div>
-                </div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
 
 
-# ---------- Home Page ----------
+# ---------- Pages: Home & Feed ----------
 
 def render_home_page():
     st.title("🏠 Home")
@@ -670,13 +896,11 @@ def render_home_page():
         """
         <div class='card'>
         <h3>Welcome to Your Run Tracker + AI Coach</h3>
-        <p>Analyze your runs, visualize training trends, and get personalized coaching.</p>
+        <p>Log runs, analyze your training, and get AI coaching towards your race goals.</p>
         </div>
         """,
         unsafe_allow_html=True,
     )
-
-    st.markdown("<div class='section-divider'>Overview</div>", unsafe_allow_html=True)
 
     df = fetch_runs()
     if df.empty:
@@ -684,24 +908,42 @@ def render_home_page():
         return
 
     metrics = prepare_metrics_df(df)
+    metrics = compute_efficiency_score(metrics)
     total_miles = metrics["distance"].sum(skipna=True)
     last_7 = metrics[metrics["date_dt"] >= datetime.now() - timedelta(days=7)]
     last7_miles = last_7["distance"].sum(skipna=True)
-
+    eff_avg = metrics["efficiency_score"].mean(skipna=True)
     total_display, unit = convert_distance_for_display(total_miles)
     last7_display, _ = convert_distance_for_display(last7_miles)
 
-    col1, col2 = st.columns(2)
+    current_streak, longest_streak = compute_streaks(metrics)
+
+    col1, col2, col3, col4 = st.columns(4)
     col1.metric("Total Distance", f"{total_display:.1f} {unit}")
     col2.metric("Last 7 Days", f"{last7_display:.1f} {unit}")
+    col3.metric("Avg Efficiency", f"{eff_avg:.1f}" if not pd.isna(eff_avg) else "—")
+    col4.metric("Current Streak", f"{current_streak} days")
 
-    st.markdown("<div class='section-divider'>Recent Activity</div>", unsafe_allow_html=True)
+    st.markdown("<h4>Recent Runs</h4>", unsafe_allow_html=True)
 
-    for _, row in df.tail(5).iloc[::-1].iterrows():
-        icon = "🏃"
+    df_recent = df.tail(5).iloc[::-1]
+    prs = calculate_prs(metrics)
+    for _, row in df_recent.iterrows():
         rt = row["run_type"] or "Other"
-
         distance, dunit = convert_distance_for_display(row["distance"])
+        pace = row["avg_pace"] or "—"
+        hr = row["avg_hr"] or "—"
+        elev = row["elevation_gain"] or "—"
+
+        badges = []
+        if prs:
+            if row["distance"] == prs.get("longest_distance"):
+                badges.append("🔥 Longest Run PR")
+            if pace_to_float(row["avg_pace"]) == prs.get("fastest_pace"):
+                badges.append("⚡ Fastest Pace PR")
+
+        badge_text = " | ".join(badges)
+
         st.markdown(
             f"""
             <div class='card feed-card'>
@@ -711,16 +953,23 @@ def render_home_page():
                 </div>
                 <div class='feed-main-metrics'>
                     <span class='big-distance'>{distance:.2f} {dunit}</span>
-                    <span class='muted'>Avg Pace: {row['avg_pace'] or '—'}</span>
-                    <span class='muted'>HR: {row['avg_hr'] or '—'} bpm</span>
+                    <span class='muted'>Pace: {pace}</span>
+                    <span class='muted'>HR: {hr} bpm</span>
+                    <span class='muted'>Elev: {elev} ft</span>
                 </div>
+                <span class='muted'>Felt: {row['how_felt'] or '—'}</span><br>
+                <span class='muted'>Effort: {row['effort'] or '—'} / 10</span>
+                {"<div class='pr-badge'>" + badge_text + "</div>" if badge_text else ""}
             </div>
             """,
             unsafe_allow_html=True,
         )
 
+        if st.button(f"Edit Run {row['id']}", key=f"edit_home_{row['id']}"):
+            st.session_state["page"] = "Edit Run"
+            st.session_state["edit_run_id"] = row["id"]
+            st.experimental_rerun()
 
-# ---------- Feed Page ----------
 
 def render_feed_page():
     st.title("📜 Training Feed")
@@ -731,10 +980,24 @@ def render_feed_page():
         return
 
     df = df.sort_values("date", ascending=False)
+    metrics = prepare_metrics_df(df)
+    prs = calculate_prs(metrics)
 
     for _, row in df.iterrows():
         rt = row["run_type"] or "Other"
         distance, dunit = convert_distance_for_display(row["distance"])
+        pace = row["avg_pace"] or "—"
+        hr = row["avg_hr"] or "—"
+        elev = row["elevation_gain"] or "—"
+
+        badges = []
+        if prs:
+            if row["distance"] == prs.get("longest_distance"):
+                badges.append("🔥 Longest Run PR")
+            if pace_to_float(row["avg_pace"]) == prs.get("fastest_pace"):
+                badges.append("⚡ Fastest Pace PR")
+
+        badge_text = " | ".join(badges)
 
         st.markdown(
             f"""
@@ -743,155 +1006,24 @@ def render_feed_page():
                     <span><strong>{row['date']}</strong></span>
                     <span class='tag tag-{rt}'>{rt}</span>
                 </div>
-
                 <div class='feed-main-metrics'>
                     <span class='big-distance'>{distance:.2f} {dunit}</span>
-                    <span class='muted'>Pace: {row['avg_pace'] or '—'}</span>
-                    <span class='muted'>HR: {row['avg_hr'] or '—'} bpm</span>
-                    <span class='muted'>Elev: {row['elevation_gain'] or '—'} ft</span>
+                    <span class='muted'>Pace: {pace}</span>
+                    <span class='muted'>HR: {hr} bpm</span>
+                    <span class='muted'>Elev: {elev} ft</span>
                 </div>
-
-                <span class='muted'>Effort: {row['effort'] or '—'} / 10</span>
+                <span class='muted'>Effort: {row['effort'] or '—'} / 10</span><br>
                 <span class='muted'>Felt: {row['how_felt'] or '—'}</span>
+                {"<div class='pr-badge'>" + badge_text + "</div>" if badge_text else ""}
             </div>
             """,
             unsafe_allow_html=True,
         )
 
-
-# ---------- Log Run Page ----------
-
-def insert_run(data):
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute(
-        """
-        INSERT INTO runs
-        (date, run_type, distance, duration_minutes, avg_pace, splits,
-         avg_hr, max_hr, hr_by_segment, cadence, elevation_gain, effort,
-         terrain, weather, how_felt, pain, sleep_hours, stress,
-         nutrition_notes, vo2max, hrv)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            data["date"],
-            data["run_type"],
-            data["distance"],
-            data["duration_minutes"],
-            data["avg_pace"],
-            data["splits"],
-            data["avg_hr"],
-            data["max_hr"],
-            data["hr_by_segment"],
-            data["cadence"],
-            data["elevation_gain"],
-            data["effort"],
-            data["terrain"],
-            data["weather"],
-            data["how_felt"],
-            data["pain"],
-            data["sleep_hours"],
-            data["stress"],
-            data["nutrition_notes"],
-            data["vo2max"],
-            data["hrv"],
-        ),
-    )
-    conn.commit()
-    conn.close()
-
-
-def fetch_runs():
-    conn = get_conn()
-    df = pd.read_sql_query("SELECT * FROM runs ORDER BY date ASC", conn)
-    conn.close()
-    return df
-
-
-def render_log_run_page():
-    st.title("📝 Log a Run")
-
-    with st.form("log_run"):
-        date_val = st.date_input("Date", datetime.today())
-        run_type = st.selectbox("Run Type", ["Easy", "LongRun", "Tempo", "Intervals", "Recovery", "Race", "Other"])
-        distance = st.number_input("Distance (mi)", min_value=0.0, step=0.01)
-        duration = st.text_input("Duration (MM:SS or HH:MM:SS)")
-        avg_pace = st.text_input("Avg Pace (optional)")
-        splits = st.text_area("Splits (optional)")
-
-        avg_hr = st.number_input("Avg HR", min_value=0, max_value=240, value=0)
-        max_hr = st.number_input("Max HR", min_value=0, max_value=240, value=0)
-        cadence = st.number_input("Cadence (spm)", min_value=0, max_value=300, value=0)
-        elevation_gain = st.number_input("Elevation Gain (ft)", min_value=0, value=0)
-
-        effort = st.slider("Effort (1–10)", 1, 10, 5)
-        terrain = st.text_input("Terrain")
-        weather = st.text_input("Weather")
-        how_felt = st.text_input("How I Felt")
-        pain = st.text_input("Any Pain or Tightness")
-
-        sleep = st.number_input("Sleep (hrs)", min_value=0.0, step=0.1)
-        stress = st.slider("Stress (1–5)", 1, 5, 1)
-        nutrition = st.text_area("Nutrition/Hydration Notes")
-
-        vo2 = st.number_input("VO2 Max", min_value=0.0, step=0.1)
-        hrv = st.number_input("HRV", min_value=0, max_value=200)
-
-        submitted = st.form_submit_button("Save Run")
-
-        if submitted:
-            minutes = duration_to_minutes(duration)
-            if minutes is None:
-                st.error("Invalid duration format.")
-                return
-
-            data = {
-                "date": date_val.isoformat(),
-                "run_type": run_type,
-                "distance": distance,
-                "duration_minutes": minutes,
-                "avg_pace": avg_pace,
-                "splits": splits,
-                "avg_hr": avg_hr,
-                "max_hr": max_hr,
-                "hr_by_segment": "",
-                "cadence": cadence,
-                "elevation_gain": elevation_gain,
-                "effort": effort,
-                "terrain": terrain,
-                "weather": weather,
-                "how_felt": how_felt,
-                "pain": pain,
-                "sleep_hours": sleep,
-                "stress": stress,
-                "nutrition_notes": nutrition,
-                "vo2max": vo2,
-                "hrv": hrv,
-            }
-
-            insert_run(data)
-            st.success("Run saved!")
-
-
-# ---------- Garmin Import Page ----------
-
-def render_garmin_import_page():
-    st.title("📥 Garmin CSV Import")
-
-    uploaded = st.file_uploader("Upload Garmin CSV", type=["csv"])
-
-    if uploaded is not None:
-        try:
-            df = pd.read_csv(uploaded)
-            data, msg = build_run_from_garmin_df(df)
-
-            st.info(msg)
-
-            if st.button("Import Run"):
-                insert_run(data)
-                st.success("Garmin run imported!")
-        except Exception as e:
-            st.error(f"Error reading CSV: {e}")
+        if st.button(f"Edit Run {row['id']}", key=f"edit_feed_{row['id']}"):
+            st.session_state["page"] = "Edit Run"
+            st.session_state["edit_run_id"] = row["id"]
+            st.experimental_rerun()
 # ---------- Dashboard Page ----------
 
 def render_dashboard_page():
@@ -899,285 +1031,182 @@ def render_dashboard_page():
 
     df = fetch_runs()
     if df.empty:
-        st.info("Log or import some runs to view your dashboard.")
+        st.info("Log some runs to see your dashboard analytics.")
         return
 
-    # Prepare metrics
     metrics = prepare_metrics_df(df)
     metrics = compute_efficiency_score(metrics)
-    metrics = add_hr_zones(metrics, hr_max=st.session_state.get("hr_max", 190))
 
-    daily = compute_daily_load(metrics)
-    load_df = compute_fitness_fatigue(daily)
-    current_streak, longest_streak = compute_streaks(metrics)
+    prs = calculate_prs(metrics)
 
-    # --- TOP SUMMARY METRICS ---
-    st.markdown("<div class='card'>", unsafe_allow_html=True)
-
+    # ----- Summary Metrics (top row) -----
     total_miles = metrics["distance"].sum(skipna=True)
-    last7 = metrics[metrics["date_dt"] >= datetime.now() - timedelta(days=7)]
-    last7_miles = last7["distance"].sum(skipna=True)
-    eff_avg = metrics["efficiency_score"].mean(skipna=True)
-
+    last_7_days = metrics[metrics["date_dt"] >= datetime.now() - timedelta(days=7)]
+    last7 = last_7_days["distance"].sum(skipna=True)
     total_display, unit = convert_distance_for_display(total_miles)
-    last7_display, _ = convert_distance_for_display(last7_miles)
+    last7_display, _ = convert_distance_for_display(last7)
+
+    avg_eff = metrics["efficiency_score"].mean(skipna=True)
+    avg_hr = metrics["avg_hr"].mean(skipna=True)
 
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Total Distance", f"{total_display:.1f} {unit}")
     col2.metric("Last 7 Days", f"{last7_display:.1f} {unit}")
-    col3.metric("Avg Efficiency", f"{eff_avg:.1f}" if not pd.isna(eff_avg) else "—")
-    col4.metric("Current Streak", f"{current_streak} days")
+    col3.metric("Avg HR", f"{avg_hr:.1f}" if avg_hr else "—")
+    col4.metric("Efficiency", f"{avg_eff:.1f}" if avg_eff else "—")
 
-    st.markdown("</div>", unsafe_allow_html=True)
+    # ----- PR Banners -----
+    if prs:
+        if metrics["distance"].max() == prs["longest_distance"]:
+            st.markdown("<div class='pr-banner'>🏆 New Longest Run!</div>", unsafe_allow_html=True)
 
-    # -----------------------------
-    # Weekly Distance Chart
-    # -----------------------------
+        df_copy = metrics.copy()
+        df_copy["week"] = df_copy["date_dt"].dt.isocalendar().week
+        weekly = df_copy.groupby("week")["distance"].sum()
+
+        if weekly.max() == prs["highest_weekly_mileage"]:
+            st.markdown("<div class='pr-banner'>🔥 Highest Weekly Mileage Ever!</div>", unsafe_allow_html=True)
+
+        df_copy["month"] = df_copy["date_dt"].dt.month
+        monthly = df_copy.groupby("month")["distance"].sum()
+
+        if monthly.max() == prs["highest_monthly_mileage"]:
+            st.markdown("<div class='pr-banner'>📈 Highest Monthly Mileage Ever!</div>", unsafe_allow_html=True)
+
+    # ---------- Weekly Mileage Chart ----------
     st.markdown("<div class='card'>", unsafe_allow_html=True)
-    st.subheader("Weekly Distance")
+    st.subheader("Weekly Mileage")
 
-    weekly = metrics.groupby("week_start", as_index=False)["distance"].sum()
+    dfw = metrics.copy()
+    dfw["week"] = dfw["date_dt"].dt.isocalendar().week
+    weekly = dfw.groupby("week")["distance"].sum().reset_index()
+
     if not weekly.empty:
-        weekly["display_dist"], _ = zip(*weekly["distance"].apply(convert_distance_for_display))
-
-        chart = (
-            alt.Chart(weekly)
-            .mark_bar()
-            .encode(
-                x=alt.X("week_start:T", title="Week"),
-                y=alt.Y("display_dist:Q", title=f"Distance ({unit})"),
-                tooltip=["week_start", "display_dist"]
-            )
+        chart = alt.Chart(weekly).mark_bar().encode(
+            x=alt.X("week:O", title="Week"),
+            y=alt.Y("distance:Q", title=f"Distance ({unit})")
         )
-
         st.altair_chart(chart, use_container_width=True)
-    else:
-        st.info("Not enough data for weekly chart.")
 
+        if prs.get("highest_weekly_mileage"):
+            st.markdown(
+                f"<span class='pr-mini'>🔥 PR Week: {prs['highest_weekly_mileage']:.1f} mi</span>",
+                unsafe_allow_html=True,
+            )
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # -----------------------------
-    # Pace Trend (min/mi)
-    # -----------------------------
+    # ---------- Pace Trend ----------
     st.markdown("<div class='card'>", unsafe_allow_html=True)
     st.subheader("Pace Trend (min/mi)")
 
-    p = metrics.dropna(subset=["pace_min_per_mile"])
-    if not p.empty:
-        chart = (
-            alt.Chart(p)
-            .mark_line(point=True)
-            .encode(
-                x=alt.X("date_dt:T", title="Date"),
-                y=alt.Y("pace_min_per_mile:Q", title="Pace (min/mi)", scale=alt.Scale(reverse=True)),
-                tooltip=["date", "distance", "avg_pace"]
-            )
+    pace_df = metrics.dropna(subset=["pace_min_per_mile"])
+
+    if not pace_df.empty:
+        chart = alt.Chart(pace_df).mark_line(point=True).encode(
+            x="date_dt:T",
+            y="pace_min_per_mile:Q",
         )
         st.altair_chart(chart, use_container_width=True)
-    else:
-        st.info("Log distance+duration to view pace trends.")
 
+        if prs.get("fastest_pace"):
+            st.markdown(
+                f"<span class='pr-mini'>⚡ Pace PR: {prs['fastest_pace']:.2f}</span>",
+                unsafe_allow_html=True,
+            )
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # -----------------------------
-    # HR Trend & HR Zone Distribution
-    # -----------------------------
-    colA, colB = st.columns(2)
-
-    with colA:
-        st.markdown("<div class='card'>", unsafe_allow_html=True)
-        st.subheader("Average HR Over Time")
-
-        hr_df = metrics.dropna(subset=["avg_hr"])
-        if not hr_df.empty:
-            chart = (
-                alt.Chart(hr_df)
-                .mark_line(point=True)
-                .encode(
-                    x=alt.X("date_dt:T", title="Date"),
-                    y=alt.Y("avg_hr:Q", title="Avg HR (bpm)"),
-                    tooltip=["date", "avg_hr"]
-                )
-            )
-            st.altair_chart(chart, use_container_width=True)
-        else:
-            st.info("No HR data logged.")
-
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    with colB:
-        st.markdown("<div class='card'>", unsafe_allow_html=True)
-        st.subheader("HR Zone Distribution")
-
-        z = metrics.dropna(subset=["hr_zone"])
-        zone_df = z.groupby("hr_zone", as_index=False)["duration_minutes"].sum()
-
-        if not zone_df.empty:
-            chart = (
-                alt.Chart(zone_df)
-                .mark_arc()
-                .encode(
-                    theta=alt.Theta("duration_minutes:Q", title="Minutes"),
-                    color=alt.Color("hr_zone:N", title="HR Zone"),
-                    tooltip=["hr_zone", "duration_minutes"]
-                )
-            )
-            st.altair_chart(chart, use_container_width=True)
-        else:
-            st.info("Need HR data to show zones.")
-
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    # -----------------------------
-    # Cadence Trend
-    # -----------------------------
+    # ---------- Efficiency Trend ----------
     st.markdown("<div class='card'>", unsafe_allow_html=True)
-    st.subheader("Cadence Trend (spm)")
+    st.subheader("Efficiency Score Trend")
 
-    cad = metrics.dropna(subset=["cadence"])
-    if not cad.empty:
-        chart = (
-            alt.Chart(cad)
-            .mark_line(point=True)
-            .encode(
-                x=alt.X("date_dt:T", title="Date"),
-                y=alt.Y("cadence:Q", title="Cadence (spm)"),
-                tooltip=["date", "cadence"]
-            )
+    eff_df = metrics.dropna(subset=["efficiency_score"])
+    if not eff_df.empty:
+        chart = alt.Chart(eff_df).mark_line(point=True).encode(
+            x="date_dt:T",
+            y="efficiency_score:Q",
         )
         st.altair_chart(chart, use_container_width=True)
-    else:
-        st.info("Log cadence to view this trend.")
-
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # -----------------------------
-    # Efficiency Trend
-    # -----------------------------
+    # ---------- VO2 Max Trend ----------
     st.markdown("<div class='card'>", unsafe_allow_html=True)
-    st.subheader("Efficiency Trend")
+    st.subheader("VO2 Max")
 
-    eff = metrics.dropna(subset=["efficiency_score"])
-    if not eff.empty:
-        chart = (
-            alt.Chart(eff)
-            .mark_line(point=True)
-            .encode(
-                x=alt.X("date_dt:T", title="Date"),
-                y=alt.Y("efficiency_score:Q", title="Efficiency Score"),
-                tooltip=["date", "efficiency_score"]
-            )
+    vo2_df = metrics.dropna(subset=["vo2max"])
+    if not vo2_df.empty:
+        chart = alt.Chart(vo2_df).mark_line(point=True).encode(
+            x="date_dt:T",
+            y="vo2max:Q",
         )
         st.altair_chart(chart, use_container_width=True)
-    else:
-        st.info("Need HR + distance + duration to compute efficiency.")
-
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # -----------------------------
-    # VO2max Trend
-    # -----------------------------
+    # ---------- Injury Early Signals ----------
     st.markdown("<div class='card'>", unsafe_allow_html=True)
-    st.subheader("VO2 Max Trend")
+    st.subheader("⚕️ Injury Early Signals")
 
-    vo2 = metrics.dropna(subset=["vo2max"])
-    if not vo2.empty:
-        chart = (
-            alt.Chart(vo2)
-            .mark_line(point=True)
-            .encode(
-                x=alt.X("date_dt:T", title="Date"),
-                y=alt.Y("vo2max:Q", title="VO2 Max"),
-                tooltip=["date", "vo2max"]
-            )
-        )
-        st.altair_chart(chart, use_container_width=True)
+    signals = []
+    if avg_eff and avg_eff < metrics["efficiency_score"].quantile(0.25):
+        signals.append("⚠️ Efficiency drop — potential overreaching.")
+
+    if avg_hr and avg_hr > metrics["avg_hr"].quantile(0.75):
+        signals.append("⚠️ Elevated HR — possible fatigue.")
+
+    if not signals:
+        st.success("No significant injury signals detected.")
     else:
-        st.info("Log VO2max to view trend.")
-
+        for s in signals:
+            st.warning(s)
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # -----------------------------
-    # Training Load (CTL / ATL / TSB)
-    # -----------------------------
+    # ---------- Race Prediction ----------
     st.markdown("<div class='card'>", unsafe_allow_html=True)
-    st.subheader("Training Load – Fitness (CTL), Fatigue (ATL), Form (TSB)")
+    st.subheader("🏁 Race Prediction Trend")
 
-    if not load_df.empty:
-        melted = load_df.melt(
-            id_vars="date_dt",
-            value_vars=["CTL", "ATL", "TSB"],
-            var_name="metric",
-            value_name="value"
-        )
-
-        chart = (
-            alt.Chart(melted)
-            .mark_line()
-            .encode(
-                x=alt.X("date_dt:T", title="Date"),
-                y=alt.Y("value:Q", title="Load"),
-                color="metric:N",
-                tooltip=["date_dt", "metric", "value"]
-            )
+    pred = generate_race_prediction_series(metrics)
+    if not pred.empty:
+        melted = pred.melt(id_vars="date", var_name="race", value_name="minutes")
+        chart = alt.Chart(melted).mark_line(point=True).encode(
+            x="date:T",
+            y="minutes:Q",
+            color="race:N",
+            tooltip=["date", "race", "minutes"],
         )
         st.altair_chart(chart, use_container_width=True)
-    else:
-        st.info("Training load data unavailable.")
 
+        last = pred.iloc[-1]
+        colA, colB, colC, colD = st.columns(4)
+        colA.metric("5K", f"{last['5K']:.1f} min")
+        colB.metric("10K", f"{last['10K']:.1f} min")
+        colC.metric("Half", f"{last['Half']:.1f} min")
+        colD.metric("Marathon", f"{last['Marathon']:.1f} min")
+    else:
+        st.info("Not enough data for race prediction.")
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # -----------------------------
-    # Monthly Heatmap
-    # -----------------------------
+    # ---------- Shoe Mileage ----------
     st.markdown("<div class='card'>", unsafe_allow_html=True)
-    st.subheader("Monthly Distance Heatmap")
+    st.subheader("👟 Shoe Mileage")
 
-    cal = daily.copy()
-    if not cal.empty:
-        cal["date"] = cal["date_dt"].dt.date
-        cal["dow"] = cal["date_dt"].dt.weekday
-        cal["week"] = cal["date_dt"].dt.isocalendar().week
-
-        chart = (
-            alt.Chart(cal)
-            .mark_rect()
-            .encode(
-                x=alt.X("week:O", title="Week"),
-                y=alt.Y("dow:O", title="Day of Week"),
-                color=alt.Color("distance:Q", title=f"Distance ({unit})"),
-                tooltip=["date", "distance"]
-            )
-        )
-        st.altair_chart(chart, use_container_width=True)
+    shoes = fetch_shoes(include_retired=True)
+    if shoes.empty:
+        st.info("No shoes added yet.")
     else:
-        st.info("No daily data for heatmap.")
+        for _, s in shoes.iterrows():
+            shoe_runs = metrics[metrics["shoe_id"] == s["id"]]
+            miles = shoe_runs["distance"].sum() if not shoe_runs.empty else 0
 
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    # -----------------------------
-    # Training Type Breakdown
-    # -----------------------------
-    st.markdown("<div class='card'>", unsafe_allow_html=True)
-    st.subheader("Training Type Distribution")
-
-    type_df = metrics.groupby("run_type", as_index=False)["distance"].sum()
-    if not type_df.empty:
-        chart = (
-            alt.Chart(type_df)
-            .mark_arc()
-            .encode(
-                theta="distance:Q",
-                color="run_type:N",
-                tooltip=["run_type", "distance"]
+            st.markdown(
+                f"""
+                <div>
+                    <strong>{s['name']} ({s['brand']})</strong> — {"Retired" if s['retired'] else "Active"}<br>
+                    Miles: {miles:.1f}
+                </div>
+                """,
+                unsafe_allow_html=True,
             )
-        )
-        st.altair_chart(chart, use_container_width=True)
-    else:
-        st.info("Need run types logged.")
-
     st.markdown("</div>", unsafe_allow_html=True)
-# ---------- AI Coach Page ----------
+# ---------- AI Coach Page (includes PR Milestones & Training Block Generator) ----------
 
 def render_ai_coach_page():
     st.title("🤖 AI Coach")
@@ -1187,17 +1216,25 @@ def render_ai_coach_page():
         st.info("Log some runs or import Garmin data for AI analysis.")
         return
 
+    metrics = prepare_metrics_df(df)
     recent = df.tail(30)
     latest = df.iloc[-1].to_dict()
     race_goal = st.session_state.get("race_goal", "")
     race_date = st.session_state.get("race_date_str", "")
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(
-        ["Daily & Weekly Analysis", "Workout Generator", "7-Day Planner",
-         "Race Simulator", "Injury Risk"]
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(
+        [
+            "Daily & Weekly",
+            "Workout Generator",
+            "7-Day Plan",
+            "Race Sim",
+            "Injury Risk AI",
+            "PR Milestones",
+            "Training Block",
+        ]
     )
 
-    # --- TAB 1: Basic Run / Weekly Analysis ---
+    # --- TAB 1: Daily & Weekly Analysis ---
     with tab1:
         col1, col2 = st.columns(2)
 
@@ -1215,19 +1252,32 @@ def render_ai_coach_page():
             st.markdown("<div class='card'><h3>Weekly Summary</h3></div>", unsafe_allow_html=True)
             if st.button("Summarize Last 7 Days"):
                 last7 = df[pd.to_datetime(df["date"]) >= datetime.today() - timedelta(days=7)]
+                week_metrics = prepare_metrics_df(last7) if not last7.empty else last7
+                week_prs = calculate_prs(week_metrics) if not last7.empty else {}
+
+                if week_prs:
+                    st.markdown("<strong>PR Achievements This Week:</strong>", unsafe_allow_html=True)
+                    for key, val in week_prs.items():
+                        label = key.replace("_", " ").title()
+                        if "fastest" in key:
+                            st.write(f"⚡ {label}: {val:.2f} min")
+                        else:
+                            st.write(f"🔥 {label}: {val:.2f} mi")
+
                 prompt = (
                     "Provide a detailed weekly training summary including mileage, pace trends, HR trends, "
                     "efficiency changes, fatigue level, suggested training load next week, and recovery advice.\n\n"
-                    f"Weekly data: {last7.to_dict('records')}"
+                    f"Weekly data: {last7.to_dict('records')}\n\n"
+                    f"Weekly PRs: {week_prs}"
                 )
                 st.write(call_ai(prompt))
 
-    # --- TAB 2: Workout Generator for Tomorrow ---
+    # --- TAB 2: Workout Generator ---
     with tab2:
         st.markdown("<div class='card'><h3>Generate Tomorrow’s Workout</h3></div>", unsafe_allow_html=True)
         if st.button("Create Tomorrow's Workout"):
             prompt = (
-                "Based on my last 2–3 runs, fitness level, and goal race, "
+                "Based on my last 2–3 weeks of training, fitness level, and goal race, "
                 "generate a complete training session for tomorrow including warm-up, "
                 "main set, paces or HR zones, cooldown, and purpose.\n\n"
                 f"Race goal: {race_goal}\n"
@@ -1235,7 +1285,7 @@ def render_ai_coach_page():
             )
             st.write(call_ai(prompt))
 
-    # --- TAB 3: AI-Generated 7-Day Training Plan ---
+    # --- TAB 3: 7-Day Planner ---
     with tab3:
         st.markdown("<div class='card'><h3>7-Day Training Plan</h3></div>", unsafe_allow_html=True)
         if st.button("Generate Next 7-Day Plan"):
@@ -1260,9 +1310,9 @@ def render_ai_coach_page():
             )
             st.write(call_ai(prompt))
 
-    # --- TAB 5: Injury Risk Assessment ---
+    # --- TAB 5: Injury Risk AI (J) ---
     with tab5:
-        st.markdown("<div class='card'><h3>Injury Risk Check</h3></div>", unsafe_allow_html=True)
+        st.markdown("<div class='card'><h3>AI Injury Risk Analysis</h3></div>", unsafe_allow_html=True)
         if st.button("Evaluate Injury Risk"):
             prompt = (
                 "Evaluate my injury risk with focus on shin splints. Analyze training load changes, "
@@ -1272,6 +1322,73 @@ def render_ai_coach_page():
             )
             st.write(call_ai(prompt))
 
+    # --- TAB 6: PR Milestone Analysis ---
+    with tab6:
+        st.markdown("<div class='card'><h3>🏆 PR Milestone Analysis</h3></div>", unsafe_allow_html=True)
+
+        df_all = fetch_runs()
+        metrics_all = prepare_metrics_df(df_all)
+        prs_all = calculate_prs(metrics_all)
+
+        st.subheader("Your Current Personal Records")
+        for key, val in prs_all.items():
+            label = key.replace("_", " ").title()
+            if "fastest" in key:
+                st.write(f"⚡ **{label}:** {val:.2f} min")
+            else:
+                st.write(f"🔥 **{label}:** {val:.2f} mi")
+
+        st.markdown("---")
+
+        if st.button("Analyze PR Progress"):
+            df_sorted = metrics_all.sort_values("date_dt")
+            trend_data = df_sorted.to_dict("records")
+
+            prompt = f"""
+You are an elite running coach. Analyze the athlete’s PR progression based on these run records.
+Break your answer into 6 sections:
+
+1. Summary of PR Progress
+2. Reasons for Improvement
+3. Identify Weak Spots
+4. Predict the Next Likely PR
+5. Workout Plan to Break That PR
+6. Long-Term Projection
+
+Training history:
+{trend_data}
+
+Current PRs:
+{prs_all}
+"""
+            analysis = call_ai(prompt)
+            st.write(analysis)
+
+    # --- TAB 7: Training Block Generator (I) ---
+    with tab7:
+        st.markdown("<div class='card'><h3>📆 Training Block Generator</h3></div>", unsafe_allow_html=True)
+        block_length = st.selectbox("Block Length (weeks)", [8, 10, 12, 16], index=2)
+
+        if st.button("Generate Training Block"):
+            prompt = f"""
+You are a professional running coach. Create a {block_length}-week half-marathon training block
+for me leading into my goal race.
+
+Details:
+- Goal race & time: {race_goal}, date {race_date}
+- Training history: {recent.to_dict('records')}
+- Current PRs: {calculate_prs(metrics)}
+- Weekly mileage goal (user setting): {st.session_state.get("weekly_goal_mi", 25.0)}
+- Constraints: focus on gradual progression, 1–2 key workouts/week, avoid overloading shins.
+
+Output a week-by-week plan with:
+- Weekly mileage target
+- 4–5 runs per week with type (easy, long, tempo, intervals, recovery)
+- Specific workouts for key days
+- Notes on recovery weeks and deloads
+- Taper plan in the final 1–2 weeks
+"""
+            st.write(call_ai(prompt))
 
 
 # ---------- Compare Runs Page ----------
@@ -1284,35 +1401,24 @@ def render_compare_runs_page():
         st.info("Log at least two runs to compare them.")
         return
 
-    run_ids = df["id"].tolist()
-    run_labels = [f"{r['date']} — {r['run_type']} — {r['distance']} mi" for _, r in df.iterrows()]
-    id_to_run = {label: r for label, (_, r) in zip(run_labels, df.iterrows())}
+    df_sorted = df.sort_values("date", ascending=False)
+    run_labels = [f"{r['date']} — {r['run_type']} — {r['distance']} mi" for _, r in df_sorted.iterrows()]
+    id_to_run = {label: r for label, (_, r) in zip(run_labels, df_sorted.iterrows())}
 
     col1, col2 = st.columns(2)
-
     with col1:
-        r1_label = st.selectbox("Run 1", run_labels)
+        r1_label = st.selectbox("Run 1", run_labels, key="cmp1")
         run1 = id_to_run[r1_label]
-
     with col2:
-        r2_label = st.selectbox("Run 2", run_labels)
+        r2_label = st.selectbox("Run 2", run_labels, key="cmp2")
         run2 = id_to_run[r2_label]
 
-    # Prevent comparing same run
     if r1_label == r2_label:
         st.warning("Please select two different runs.")
         return
 
-    # Compute differences
-    def diff(a, b):
-        if a is None or b is None:
-            return "—"
-        return round(b - a, 2)
-
     st.markdown("### 🔍 Side-by-Side Comparison")
-
     st.markdown("<div class='card'>", unsafe_allow_html=True)
-
     colA, colB, colC = st.columns(3)
     colA.markdown("#### Metric")
     colB.markdown("#### Run 1")
@@ -1339,12 +1445,10 @@ def render_compare_runs_page():
 
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # Mini Pace Comparison Chart
     st.markdown("### 📈 Performance Comparison")
-
     df_compare = pd.DataFrame([
-        {"run": r1_label, "distance": run1["distance"], "hr": run1["avg_hr"], "elev": run1["elevation_gain"]},
-        {"run": r2_label, "distance": run2["distance"], "hr": run2["avg_hr"], "elev": run2["elevation_gain"]},
+        {"run": "Run 1", "distance": run1["distance"], "hr": run1["avg_hr"], "elev": run1["elevation_gain"]},
+        {"run": "Run 2", "distance": run2["distance"], "hr": run2["avg_hr"], "elev": run2["elevation_gain"]},
     ])
 
     chart = (
@@ -1359,9 +1463,7 @@ def render_compare_runs_page():
     )
     st.altair_chart(chart, use_container_width=True)
 
-    # AI Summary of Comparison
     st.markdown("### 🤖 AI Comparison Summary")
-
     if st.button("Generate AI Comparison"):
         prompt = (
             "Compare these two runs in detail. Cover pacing, heart rate response, "
@@ -1371,6 +1473,127 @@ def render_compare_runs_page():
             f"Run 2: {run2}"
         )
         st.write(call_ai(prompt))
+
+
+# ---------- Pace Zones Page ----------
+
+def render_pace_zones_page():
+    st.title("📏 Pace & HR Zones")
+
+    df = fetch_runs()
+    if df.empty:
+        st.info("Log some runs to generate pace zones.")
+        return
+
+    metrics = prepare_metrics_df(df)
+    prs = calculate_prs(metrics)
+
+    best_pace = prs.get("fastest_pace")
+    threshold_pace = estimate_threshold_pace(prs)
+    easy_min, easy_max = estimate_easy_pace(best_pace) if best_pace else (None, None)
+    tempo = estimate_tempo_pace(threshold_pace)
+    interval = estimate_interval_pace(best_pace) if best_pace else None
+    rep = estimate_rep_pace(best_pace) if best_pace else None
+
+    hr_max = st.session_state.get("hr_max", 190)
+    hr_zones = calculate_hr_zones(hr_max)
+
+    # ---------- Pace Zones Table ----------
+    st.markdown("<div class='card'>", unsafe_allow_html=True)
+    st.subheader("Pace Zones (min/mile)")
+
+    pace_data = []
+
+    def add_zone(name, pace_range):
+        if not pace_range or not pace_range[0] or not pace_range[1]:
+            return
+        pace_data.append({
+            "Zone": name,
+            "Min Pace (min/mi)": f"{pace_range[0]:.2f}",
+            "Max Pace (min/mi)": f"{pace_range[1]:.2f}",
+        })
+
+    if easy_min and easy_max:
+        add_zone("Recovery", (easy_min + 0.5, easy_max + 0.5))
+        add_zone("Easy", (easy_min, easy_max))
+        add_zone("Aerobic Endurance", (easy_min - 0.3, easy_min + 0.3))
+
+    if tempo:
+        add_zone("Tempo", tempo)
+
+    if threshold_pace:
+        add_zone("Threshold", (threshold_pace * 0.98, threshold_pace * 1.02))
+
+    if interval:
+        add_zone("Interval", interval)
+
+    if rep:
+        add_zone("Repetition", rep)
+
+    if pace_data:
+        st.table(pd.DataFrame(pace_data))
+    else:
+        st.info("Need at least a few runs with pace data to calculate zones.")
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # ---------- HR Zones ----------
+    st.markdown("<div class='card'>", unsafe_allow_html=True)
+    st.subheader("HR Zones")
+
+    hr_data = []
+    for zone, (low, high) in hr_zones.items():
+        hr_data.append({
+            "Zone": zone,
+            "Low (bpm)": int(low),
+            "High (bpm)": int(high),
+        })
+
+    st.table(pd.DataFrame(hr_data))
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # ---------- Zone Usage Examples ----------
+    st.markdown("<div class='card'>", unsafe_allow_html=True)
+    st.subheader("How to Use These Zones")
+
+    st.write("""
+- **Recovery** — Day after hard workouts; very easy run  
+- **Easy (Zone 2)** — Most of your mileage and long runs  
+- **Aerobic** — Steady runs; aerobic development  
+- **Tempo** — Strong but controlled efforts; marathon strength  
+- **Threshold** — Close to 10K / half pace; lactate threshold work  
+- **Interval** — 3–5 minute repeats near VO2 max  
+- **Repetition** — Very fast, short reps for leg speed and form  
+    """)
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # ---------- AI Zone Workout Generator ----------
+    st.markdown("<div class='card'>", unsafe_allow_html=True)
+    st.subheader("AI Zone Workout Generator")
+
+    zone_choice = st.selectbox(
+        "Select a Zone",
+        ["Recovery", "Easy", "Aerobic Endurance", "Tempo", "Threshold", "Interval", "Repetition"]
+    )
+
+    if st.button("Generate Zone Workout"):
+        prompt = f"""
+Create a structured running workout for the **{zone_choice}** zone.
+Include:
+- warm-up
+- main set
+- cooldown
+- pacing instructions (min/mile)
+- HR zone instructions
+- purpose of the workout
+- where in the week to place it
+"""
+        st.write(call_ai(prompt))
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
 # ---------- Settings Page ----------
 
 def render_settings_page():
@@ -1459,7 +1682,7 @@ def render_settings_page():
         )
         st.session_state["weekly_goal_mi"] = weekly_goal
 
-    # --- Data Management ---
+    # --- Data Export / Delete ---
     st.markdown("<div class='card'><h3>Data</h3></div>", unsafe_allow_html=True)
     col8, col9 = st.columns(2)
 
@@ -1485,13 +1708,65 @@ def render_settings_page():
             conn.close()
             st.warning("All run data deleted.")
 
+    # --- Shoe Management ---
+    st.markdown("<div class='card'><h3>Shoes</h3></div>", unsafe_allow_html=True)
+    st.write("Track your running shoes and mileage.")
+
+    with st.form("add_shoe"):
+        colA, colB = st.columns(2)
+        with colA:
+            shoe_name = st.text_input("Shoe Name (e.g., Clifton 10)")
+        with colB:
+            shoe_brand = st.text_input("Brand (e.g., Hoka)")
+
+        start_date = st.date_input("Start Date", datetime.today().date())
+        add_shoe_btn = st.form_submit_button("Add Shoe")
+
+        if add_shoe_btn:
+            insert_shoe(shoe_name, shoe_brand, start_date.isoformat())
+            st.success("Shoe added!")
+
+    st.subheader("Active Shoes")
+    shoes_df = fetch_shoes()
+    runs_df = fetch_runs()
+
+    if shoes_df.empty:
+        st.info("No shoes added yet.")
+    else:
+        for _, s in shoes_df.iterrows():
+            shoe_runs = runs_df[runs_df["shoe_id"] == s["id"]]
+            mileage = shoe_runs["distance"].sum() if not shoe_runs.empty else 0
+            miles_left = 400 - mileage
+            warn = ""
+            if mileage > 350:
+                warn = "⚠️ Nearing end of life"
+            elif mileage > 300:
+                warn = "⚠️ Getting worn"
+
+            st.markdown(
+                f"""
+                <div class='card'>
+                    <strong>{s['name']} ({s['brand']})</strong><br>
+                    Start: {s['start_date']}<br>
+                    Miles: {mileage:.1f}<br>
+                    {warn}
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            if st.button(f"Retire {s['name']}", key=f"retire_{s['id']}"):
+                retire_shoe(s["id"])
+                st.warning(f"{s['name']} retired.")
+
 
 # ---------- MAIN APP ----------
 
 def main():
     st.set_page_config(page_title="Run Tracker & AI Coach", layout="wide")
     init_session_state()
-    init_db()
+    init_db_with_migration()
+    inject_css()
 
     # Sidebar quick settings & navigation
     st.sidebar.header("Quick Settings")
@@ -1519,7 +1794,6 @@ def main():
     )
     st.session_state["compact_mode"] = st.session_state["sidebar_compact"]
 
-    # ✅ Race goal in sidebar uses a DIFFERENT key than settings page
     st.sidebar.text_input(
         "Race Goal",
         value=st.session_state["race_goal"],
@@ -1539,6 +1813,7 @@ def main():
             "Garmin Import",
             "AI Coach",
             "Compare Runs",
+            "Pace Zones",
             "Settings",
         ],
         index=[
@@ -1549,16 +1824,13 @@ def main():
             "Garmin Import",
             "AI Coach",
             "Compare Runs",
+            "Pace Zones",
             "Settings",
         ].index(st.session_state.get("page", "Home")),
     )
     st.session_state["page"] = page
 
-    inject_css()
-    # You *can* call render_navbar() if you want the top bar visible, or skip it
-    # render_navbar()
-
-    # Route to the selected page
+    # Route
     if page == "Home":
         render_home_page()
     elif page == "Feed":
@@ -1573,6 +1845,8 @@ def main():
         render_ai_coach_page()
     elif page == "Compare Runs":
         render_compare_runs_page()
+    elif page == "Pace Zones":
+        render_pace_zones_page()
     elif page == "Settings":
         render_settings_page()
 
